@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import trafilatura
 
 from kairos.bookmarks.urls import is_internal_or_redirect

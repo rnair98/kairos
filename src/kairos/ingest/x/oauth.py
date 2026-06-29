@@ -8,7 +8,7 @@ import secrets
 from dataclasses import dataclass
 from urllib.parse import quote, urlencode
 
-import httpx
+import httpx2 as httpx
 
 from kairos.config import settings
 from kairos.ingest.x.client import XApiError

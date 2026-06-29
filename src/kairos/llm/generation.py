@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import orjson
 
 from kairos.config import settings
@@ -18,9 +20,33 @@ from kairos.models.schemas import (
 from kairos.observability.bus import event_bus
 
 
+def _inline_refs(node: Any, defs: dict) -> Any:
+    """Recursively inline ``$ref`` pointers against ``$defs``.
+
+    Pydantic emits nested models (e.g. ClusterDigestCore.links → DigestLinkCard)
+    into ``$defs`` and references them with ``{"$ref": "#/$defs/Name"}``. The
+    Gemini Interactions API response_format has no ``$defs`` section, so any ref
+    left in ``properties`` resolves to nothing ("reference to undefined schema").
+    Inlining makes the schema self-contained.
+    """
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if ref:
+            name = ref.split("/")[-1]
+            resolved = _inline_refs(defs.get(name, {}), defs)
+            siblings = {k: _inline_refs(v, defs) for k, v in node.items() if k != "$ref"}
+            return {**resolved, **siblings}
+        return {k: _inline_refs(v, defs) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_inline_refs(item, defs) for item in node]
+    return node
+
+
 def _response_format_for(model: type) -> list[dict]:
     schema = model.model_json_schema()
-    fmt: dict = {"type": "object", "properties": schema.get("properties", {})}
+    defs = schema.get("$defs", {})
+    properties = _inline_refs(schema.get("properties", {}), defs)
+    fmt: dict = {"type": "object", "properties": properties}
     if required := schema.get("required"):
         fmt["required"] = required
     return [fmt]
