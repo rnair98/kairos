@@ -1,0 +1,20 @@
+PLAN.md
+  s_9878790b1180ce::t_a8f4d0e231886b 388,390,392-394,397-398,400-403,415,417,432-461
+  s_9878790b1180ce::t_384a42393e7c04 630-635
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "78cbb8b31a54f587bd3e388cdecf37f3efed61bd",
+  "prompts": {},
+  "sessions": {
+    "s_9878790b1180ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "814afe08-6e85-4d71-bcf6-b1c20b0acf40",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Rohit Nair <6954311+rnair98@users.noreply.github.com>"
+    }
+  }
+}
