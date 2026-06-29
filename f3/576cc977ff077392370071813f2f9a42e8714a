@@ -1,0 +1,32 @@
+src/kairos/delivery/render.py
+  s_9878790b1180ce::t_64680911c7fe02 22-23,26-28,32-35,40-42
+src/kairos/ingest/x/oauth.py
+  s_9878790b1180ce::t_50b60e5c459a5a 11
+src/kairos/llm/generation.py
+  s_9878790b1180ce::t_1324379f7ac186 5-6
+  s_9878790b1180ce::t_32d5a14dd95d81 23-44,47-49
+src/kairos/ingest/x/client.py
+  s_9878790b1180ce::t_9ba2fbe738565d 7
+pyproject.toml
+  s_9878790b1180ce::t_06349547739afa 9
+src/kairos/bookmarks/link_fetch.py
+  s_9878790b1180ce::t_1a982d8b52233f 11
+uv.lock
+  s_9878790b1180ce::t_289bebab7d2f10 983-995,1068-1083,1256,1290,3499-3507
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "f3576cc977ff077392370071813f2f9a42e8714a",
+  "prompts": {},
+  "sessions": {
+    "s_9878790b1180ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "814afe08-6e85-4d71-bcf6-b1c20b0acf40",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Rohit Nair <6954311+rnair98@users.noreply.github.com>"
+    }
+  }
+}
