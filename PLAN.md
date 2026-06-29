@@ -385,16 +385,22 @@ The active runbook is [docs/demo-readiness/DEMO.md](docs/demo-readiness/DEMO.md)
 
 ---
 
-## Research-Driven Roadmap (R1–R4)
+## Research-Driven Roadmap (R1–R6)
 
-Force-multiplier upgrades distilled from two independent research passes (this repo's reasoning + the Exa-sourced survey in `docs/archive/research/CURSOR.md`). Ordered for **force-multiplier × demonstrability × theme coverage**, not pure engineering quality. Where the two passes converged, confidence is high; the ordering below deliberately re-weights toward *demonstrable capability* over invisible internal quality.
+Force-multiplier upgrades distilled from two independent research passes (this repo's reasoning + the Exa-sourced survey in `docs/archive/research/CURSOR.md`).
 
-| # | Upgrade | Research basis | What it fixes | Primary files | Effort |
+**Selection criterion (revised).** This is an *unbounded* build — coding agents remove engineering effort as a constraint. So nothing is deferred for being "too much work," "med effort," or "won't show on stage." An item is only deferred when there is a **genuine technical reason** it should not be built now: a data-regime limit (the method is unsound at our sample size), an objective mismatch (it optimizes against the restraint thesis), a calibration failure, a degenerate-input problem, or a circular-validation trap. Every deferral below carries one of those reasons explicitly — see [Deferred — with technical rationale](#deferred--with-technical-rationale). Items previously buried on scope grounds (PRISM, LTV-POMDP) are promoted to active R-lines.
+
+| # | Upgrade | Research basis | What it fixes | Primary files | Status |
 |---|---------|----------------|---------------|---------------|--------|
 | **R1** | GAMBITTS-lite — action vs. treatment | Generator-Mediated Bandits (2025); Action-Centered TS (Greenewald–Murphy, NeurIPS 2017) | ✅ Shipped secondary treatment posterior by `digest_style`; treatment-lift panel is Finish Line Sprint D | `db/bandit.py`, `core/feedback.py`, `web/app.py`, `index.html` | Done / Sprint D |
-| **R2** | Linear Thompson Sampling | LinUCB (Li 2010 — news timing); Linear TS (Agrawal–Goyal 2013) | Discrete `context_class` buckets fragment sparse feedback; similar moments share zero signal | `core/bandit.py`, `db/bandit.py`, `core/moment.py`, `core/ranking.py` | Med |
-| **R3** | Sleep-time-lite | Sleep-time Compute (Lin 2025); Letta dual-agent | Live SURFACE path is 20–40s (moment-fit + grounding + digest) | `core/sleep_cache.py`, `core/context.py`, `core/ranking.py` | Low–Med |
+| **R2** | Linear Thompson Sampling | LinUCB (Li 2010 — news timing); Linear TS (Agrawal–Goyal 2013) | Discrete `context_class` buckets fragment sparse feedback; similar moments share zero signal | `core/bandit.py`, `db/bandit.py`, `core/moment.py`, `core/ranking.py` | Active |
+| **R3** | Sleep-time-lite | Sleep-time Compute (Lin 2025); Letta dual-agent | Live SURFACE path is 20–40s (moment-fit + grounding + digest) | `core/sleep_cache.py`, `core/context.py`, `core/ranking.py` | Active |
 | **R4** | GEPA + trace join | GEPA (Agrawal 2026); Letta Context Repositories | ✅ Prompt diff loop shipped; remaining trace join would make prompt→output→reward exact | `core/optimize.py`, `db/optimization_runs.py`, future trace table | Partial |
+| **R5** | PRISM — calibrated speak-vs-silent | PRISM (2026); selective prediction / calibrated abstention | Binary `moment_fit` threshold is uncalibrated; abstention is the thesis but isn't principled | `core/ranking.py` gate layer, `core/intelligence.py` | Active (promoted) |
+| **R6** | Latent-receptivity POMDP / LTV | O'Brien 2022 (Meta); Steyvers–Mayer 2025; restless bandits | Myopic bandit optimizes this tick; the real failure is 7-day disengagement. Hand-tuned `daily_surface_budget` + `min_gap` are a crude approximation of the optimal long-horizon policy | `core/ltv.py` (new), `core/ranking.py` gates, `sim/feedback_model.py` | Active (promoted) |
+
+**Evaluation substrate — doubly-robust OPE (DR-OPE).** Promoted from the deferred tail to underwrite everything above. Before deploying any new policy (R2 linear, R5 gate, R6 POMDP), DR-OPE estimates its engagement on *logged gym data without running it live*, combining the bandit's reward model with importance-weighted corrections. This turns R2/R5/R6 comparisons from "ship and eyeball the sparkline" into a rigorous counterfactual estimate, and gives the gym A/B a defensible number. Build it as `core/ope.py` once R2 lands so the linear-vs-Beta comparison is its first customer.
 
 ### R1 — GAMBITTS-lite (the standout — both passes converged here)
 
@@ -406,9 +412,9 @@ The thesis split made learnable: an interrupt is **action** (which cluster) × *
 
 ### R2 — Linear Thompson Sampling (the bandit-quality upgrade both surveys under-weighted)
 
-Replace per-bucket `Beta(α,β)` with a reward model **linear in a continuous context feature vector** `x` (gap, density, post-meeting, `topical_affinity`, hour), optionally crossed with the cluster embedding. Maintain a Gaussian posterior over weights; Thompson-sample from it. A click in `desk_long_gap_work` now informs `cafe_long_gap_work` because features overlap — the right-sized fix for sparse feedback (linear, **not** neural; defer NeuralUCB/VITS until thousands of events).
+Replace per-bucket `Beta(α,β)` with a reward model **linear in a continuous context feature vector** `x` (gap, density, post-meeting, `topical_affinity`, hour), optionally crossed with the cluster embedding. Maintain a Gaussian posterior over weights; Thompson-sample from it. A click in `desk_long_gap_work` now informs `cafe_long_gap_work` because features overlap — the right-sized fix for sparse feedback. Linearity is a **calibration choice, not a budget one**: the linear-Gaussian posterior is conjugate and therefore exactly calibrated at any sample size, which Thompson sampling requires (see VITS deferral for why neural breaks this).
 
-- Ship feature-flagged alongside the Beta bandit so the **gym can A/B the two** (`sim/gym.py` already replays the real policy).
+- Ship feature-flagged alongside the Beta bandit so the **gym can A/B the two** (`sim/gym.py` already replays the real policy), scored by DR-OPE.
 - Retire `context_class` discretization (`core/moment.py`) as the bandit key once linear is validated; keep it for snooze TTL lookup.
 
 ### R3 — Sleep-time-lite (the cheap latency win)
@@ -423,7 +429,36 @@ Pre-materialize the expensive intelligence while idle so heartbeats stay fast. *
 
 The offline prompt-RSI loop (see [Two Self-Improvement Loops](#two-self-improvement-loops)). `core/optimize.py` runs a reflective pass over the digest prompt, scored on recent `feedback_events`, emitting a real prompt diff into `optimization_runs` and the admin GEPA panel. `kairos optimize nightly` is cron-safe and skips when feedback is insufficient. The remaining research-grade upgrade is an exact trace join: prompt version + model input + model output + reward for every decision.
 
-**Next order:** treatment lift dashboard → trace join → linear/contextual bandit A/B → sleep-time cache. Deferred (post-traction): delayed-feedback bandit updates (Bootstrap TS, UAI 2024), latent-receptivity POMDP / restless-bandit LTV, TIM intra-day scheduling, recharging bandits for habituation, doubly-robust off-policy evaluation. Full survey + citations: `docs/archive/research/CURSOR.md`.
+### R5 — PRISM, calibrated speak-vs-silent (promoted — silence is the thesis, so make it principled)
+
+"Silence is a feature" is, formally, a **calibrated-abstention problem under asymmetric costs** — and Kairos currently resolves it with a binary `moment_fit` boolean plus a hand-set score threshold, which is exactly the uncalibrated heuristic PRISM replaces.
+
+- Fit a calibrated speak/silent head that estimates `P(engage | moment, cluster)` with a *reliability guarantee*, then surface only when expected benefit exceeds the asymmetric interruption cost.
+- The one input it needs is the cost matrix — `cost(false_surface)` vs `cost(false_silence)` — which is a hyperparameter we own and can sweep in the gym, **not** a data-regime blocker. Calibrating one binary head needs far less data than a contextual bandit, so this is sound now.
+- **Why promoted:** it was previously dropped on scope grounds. There is no technical reason to defer it, and it is the single most thesis-aligned item in the survey. Replaces the binary gate in `core/ranking.py` / `core/intelligence.py`.
+
+### R6 — Latent-receptivity POMDP / LTV (promoted — the long-horizon moat, with a non-circular gym)
+
+Thompson sampling and the fatigue gate both optimize *this tick*. The real failure mode is tomorrow's disengagement — too many surfaces and the user learns to ignore or disables the agent. Model a latent **receptivity** state and choose SURFACE vs KAIROS_OK to maximize multi-day engagement, refining or replacing the hand-tuned `daily_surface_budget` + `min_gap`.
+
+- **The trap, named:** learning the latent dynamics from `sim/feedback_model.py` and then validating on the same simulator is circular — you'd only confirm your own assumptions. So the precondition is a methodologically honest gym: the simulator's receptivity process must be **structurally different from, and hidden from, the policy**, so the POMDP has to *recover* it from observed behavior. Building that harder gym is part of R6, not a reason to skip it.
+- **Why promoted:** the research called this the biggest moat; it was buried as "post-traction." Under an unbounded build the circular-validation risk is an engineering problem to solve, not a reason to defer. New `core/ltv.py` + gym redesign.
+
+### Deferred — with technical rationale
+
+These stay out of the active roadmap, but **not** for effort reasons. Each has a concrete technical reason that survives the unbounded framing:
+
+| Item | Research | Technical reason to defer (not scope) |
+|------|----------|----------------------------------------|
+| **VITS / neural contextual bandit** | ICML 2024 | **Calibration failure at our sample size.** Thompson sampling's regret guarantee needs a *calibrated* posterior. Neural bandit posteriors (MC-dropout, last-layer Bayes, ensembles) are miscalibrated below ~10³–10⁴ events, breaking explore/exploit — premature collapse or pure noise. R2's linear-Gaussian posterior is conjugate and exactly calibrated now. Revisit only after thousands of real feedback events. |
+| **Graph spreading activation** | SYNAPSE / PersonalAI | **Degenerate input.** Spreading activation propagates over a weighted item/cluster graph; our corpus is one 51-member mega-cluster + 41 noise singletons — a near-clique plus disconnected points. Propagation either saturates uniformly or doesn't move, collapsing back to base cosine. Adds signal only once the corpus develops genuine multi-cluster link topology. Re-test as corpus grows. |
+| **TIM intra-day scheduling** | Kuaishou 2024 | **Objective mismatch with the thesis.** TIM's loss maximizes aggregate slot-wise CTR given a notification budget — it is trained to *fill slots well*. Kairos's objective rewards correct *abstention*. Adopting it reintroduces a throughput-maximizing allocator that fights restraint. Not a future "do later" — a "do not, by design," unless the product thesis changes. |
+| **Delayed-feedback bandit (Bootstrap TS)** | UAI 2024 | **Throughput regime suppresses the pathology — conditionally.** By Little's law, in-flight uncensored rewards ≈ arrival-rate × mean-delay. Live: ~3 surfaces/day (0.125/hr) × minutes-to-hours delay ⇒ ≈0.1 expected premature updates — the noise Bootstrap-TS fixes barely exists *because the restraint budget keeps throughput tiny*. **Caveat:** the gym runs at compressed high throughput, so if gym pretraining models realistic delay (it currently applies reward synchronously), Bootstrap-TS *would* matter there. Build it iff the gym is upgraded to model delay; skip for the live path on throughput grounds. |
+| **Recharging / restless bandits for habituation** | — | Partially **subsumed** by R6. Habituation (engagement decaying under repeated exposure) is a special case of the latent-receptivity state R6 models. Build standalone only if R6's POMDP proves too heavy and a lighter restless-bandit approximation is wanted. |
+
+Full survey + citations: `docs/archive/research/CURSOR.md`.
+
+**Active build order:** R5 (calibrated gate — small, thesis-critical) → R2 (linear bandit) → DR-OPE substrate → R6 (POMDP + honest gym) → R3 (sleep cache) → R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D.
 
 ---
 
@@ -592,12 +627,12 @@ See [Finish Line Sprint](#finish-line-sprint-1010-checklist) for implementation 
 4. **Build GEPA readiness indicator** (Self-Improvement → 10): show feedback count + min-required in GEPA panel before any run; load via `GET /api/optimize/readiness`.
 5. **Wire gym seed into demo-serve** (Demo-readiness → 10): `just demo-serve` auto-runs `just demo-seed-gym` when `feedback_events` collection is empty.
 
-### Post-hackathon
-- Exact LLM trace join (`decision_id`, prompt version, model input/output, latency, reward).
-- Linear/contextual Thompson sampling A/B in the gym (R2).
-- Sleep-time cache for precomputed candidate digests and lower heartbeat latency (R3).
-- More ingest sources (Readwise, Pocket, browser export).
-- Treatment-lift trend across GEPA prompt versions (R1 post-polish).
+### Beyond the research roadmap
+
+The policy/intelligence research work is now tracked as active R-lines (R2–R6) in the [Research-Driven Roadmap](#research-driven-roadmap-r1r6) — it is no longer "post-hackathon," since effort is not a constraint here. What genuinely sits outside that roadmap, gated by **external dependencies** rather than effort:
+
+- **More ingest sources** (Readwise, Pocket, browser export) — each needs a separate third-party API/account integration; real external dependency, not internal work.
+- **Live longitudinal validation** of R6's POMDP and the delayed-feedback path — requires real users over real days; the gym can pressure-test the mechanism but cannot substitute for longitudinal ground truth (see the circular-validation note under R6).
 
 ---
 
