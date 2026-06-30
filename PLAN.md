@@ -385,7 +385,7 @@ The active runbook is [docs/demo-readiness/DEMO.md](docs/demo-readiness/DEMO.md)
 
 ---
 
-## Research-Driven Roadmap (R1–R6)
+## Research-Driven Roadmap (R1–R6 + R4a)
 
 Force-multiplier upgrades distilled from two independent research passes (this repo's reasoning + the Exa-sourced survey in `docs/archive/research/CURSOR.md`).
 
@@ -397,10 +397,22 @@ Force-multiplier upgrades distilled from two independent research passes (this r
 | **R2** | Linear Thompson Sampling | LinUCB (Li 2010 — news timing); Linear TS (Agrawal–Goyal 2013) | Discrete `context_class` buckets fragment sparse feedback; similar moments share zero signal | `core/bandit.py`, `db/bandit.py`, `core/moment.py`, `core/ranking.py` | Active |
 | **R3** | Sleep-time-lite | Sleep-time Compute (Lin 2025); Letta dual-agent | Live SURFACE path is 20–40s (moment-fit + grounding + digest) | `core/sleep_cache.py`, `core/context.py`, `core/ranking.py` | Active |
 | **R4** | GEPA + trace join | GEPA (Agrawal 2026); Letta Context Repositories | ✅ Prompt diff loop shipped; remaining trace join would make prompt→output→reward exact | `core/optimize.py`, `db/optimization_runs.py`, future trace table | Partial |
+| **R4a** | BAML typed LLM boundary | BoundaryML BAML typed prompt programs | Structured Gemini calls have brittle schema glue; prompt-program versions are not first-class trace fields | `llm/generation.py`, `llm/compose.py`, `models/schemas.py`, future `llm_traces` | Active |
 | **R5** | PRISM — calibrated speak-vs-silent | PRISM (2026); selective prediction / calibrated abstention | Binary `moment_fit` threshold is uncalibrated; abstention is the thesis but isn't principled | `core/ranking.py` gate layer, `core/intelligence.py` | Active (promoted) |
 | **R6** | Latent-receptivity POMDP / LTV | O'Brien 2022 (Meta); Steyvers–Mayer 2025; restless bandits | Myopic bandit optimizes this tick; the real failure is 7-day disengagement. Hand-tuned `daily_surface_budget` + `min_gap` are a crude approximation of the optimal long-horizon policy | `core/ltv.py` (new), `core/ranking.py` gates, `sim/feedback_model.py` | Active (promoted) |
 
 **Evaluation substrate — doubly-robust OPE (DR-OPE).** Promoted from the deferred tail to underwrite everything above. Before deploying any new policy (R2 linear, R5 gate, R6 POMDP), DR-OPE estimates its engagement on *logged gym data without running it live*, combining the bandit's reward model with importance-weighted corrections. This turns R2/R5/R6 comparisons from "ship and eyeball the sparkline" into a rigorous counterfactual estimate, and gives the gym A/B a defensible number. Build it as `core/ope.py` once R2 lands so the linear-vs-Beta comparison is its first customer.
+
+**Performance substrate — prove before porting.** Rust/PyO3 is not a roadmap item until traces prove Python/native-backed paths are the bottleneck. Add a `perf_spans`/`llm_traces` layer that records `decision_id`, span name, wall time, CPU time where available, item counts, provider/model, cache hit/miss, and error. Capture at least 100 demo/gym heartbeats and one full `bookmarks prep` run before deciding on a port.
+
+| Gate | Evidence required | Python-first fix | Rust/PyO3 only if |
+|------|-------------------|------------------|-------------------|
+| Live heartbeat | p50/p95 by span: context, query embedding, vector rank, bandit fetch, moment-fit, digest, Exa grounding, DB writes | Sleep cache; async Exa; digest cache; fewer sequential LLM calls | CPU-only Python span is >25% of p95 after network/LLM/DB time is excluded |
+| Local vector fallback | cluster/bookmark count, vector dimension, cosine rank wall/CPU time | NumPy matrix cosine; libSQL/Turso vector search | NumPy/SQL still misses target at >50k local vectors |
+| Prep pipeline | per-stage timings: link fetch, Exa, Gemini/BAML, embedding, HDBSCAN, writes | bounded concurrency; content hash cache; bulk writes; avoid full recluster | CPU-bound parsing/vector math dominates after I/O is cached |
+| Trace/event processing | events/sec, payload bytes, write latency | batch persistence; TTL; compact JSON payloads | serialization/compression is a proven hot path |
+
+Decision rule: do not introduce a Rust module unless the trace shows a repeatable CPU-bound hotspot, a Python/native alternative has been tried or ruled out, and the candidate module has a narrow boundary (`vector_rank`, `url_normalize`, `trace_codec`, or feature-vector construction). If the slow span is LLM, Exa, embeddings API, database I/O, or scheduler latency, fix orchestration/cache/provider behavior in Python instead.
 
 ### R1 — GAMBITTS-lite (the standout — both passes converged here)
 
@@ -428,6 +440,17 @@ Pre-materialize the expensive intelligence while idle so heartbeats stay fast. *
 ### R4 — GEPA + trace join (Recursive-Intelligence coverage)
 
 The offline prompt-RSI loop (see [Two Self-Improvement Loops](#two-self-improvement-loops)). `core/optimize.py` runs a reflective pass over the digest prompt, scored on recent `feedback_events`, emitting a real prompt diff into `optimization_runs` and the admin GEPA panel. `kairos optimize nightly` is cron-safe and skips when feedback is insufficient. The remaining research-grade upgrade is an exact trace join: prompt version + model input + model output + reward for every decision.
+
+### R4a — BAML typed LLM boundary (make prompt programs testable before optimizing them)
+
+BAML belongs at Kairos's **LLM boundary**, not inside the deterministic policy. Keep Gemini Interactions API as the synthesis/runtime foundation, move web retrieval to an Exa-only grounding adapter, and keep ranking, hard gates, and bandit updates outside BAML. Use BAML where the value is highest: typed structured outputs, prompt-program tests, and traceable function/version names.
+
+- **First target:** `digest-core` and `digest-critique` in `llm/generation.py`. This is the most brittle code today because nested Pydantic schemas require custom `$ref` inlining before Gemini accepts them. BAML should own the typed digest/critique functions and fixture tests.
+- **Second target:** `enrich_bookmark`. It is high-volume, structured, and easy to regression-test against saved bookmark examples.
+- **Later target:** `moment-fit` and headspace enrichment only after fixture tests prove conservative behavior. These calls affect interruption decisions, so false positives are more expensive than parse failures.
+- **Trace contract:** persist BAML function name, prompt/program version, input hash, output schema, latency, model, and reward join key into the future `llm_traces` table. This gives GEPA/DSPy exact prompt-program provenance instead of inferring from rendered notification text.
+- **Grounding adapter:** replace direct Gemini `google_search` calls with `GroundingProvider` backed only by Exa. Demos should run with Exa grounding enabled; `none` is reserved for offline/CI runs where network or API keys are unavailable. Exa supplies search results, page contents, published dates, highlights, citations, request IDs, and cost metadata; Gemini/BAML synthesize those retrieved facts into `web_context`.
+- **Non-goals:** do not migrate web retrieval, `HeartbeatService`, ranking, PRISM gates, or bandit learning into BAML. BAML hardens the language-model interface; it does not become the policy engine or the search provider.
 
 ### R5 — PRISM, calibrated speak-vs-silent (promoted — silence is the thesis, so make it principled)
 
@@ -458,7 +481,7 @@ These stay out of the active roadmap, but **not** for effort reasons. Each has a
 
 Full survey + citations: `docs/archive/research/CURSOR.md`.
 
-**Active build order:** R5 (calibrated gate — small, thesis-critical) → R2 (linear bandit) → DR-OPE substrate → R6 (POMDP + honest gym) → R3 (sleep cache) → R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D.
+**Active build order:** R4a (BAML digest boundary — removes structured-output brittleness and creates clean prompt-program versions) → R5 (calibrated gate — small, thesis-critical) → R2 (linear bandit) → DR-OPE substrate → R6 (POMDP + honest gym) → R3 (sleep cache) → R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D.
 
 ---
 
@@ -568,6 +591,8 @@ Custom scheduler eliminated. Three Claude Code mechanisms replace it:
 | Clustering | HDBSCAN + stable centroid reuse | done |
 | Bandit | Thompson sampling α/β + cohort prior + treatment posterior | done |
 | Prompt optimization | Hand-rolled GEPA-style reflection + fixture eval | done |
+| LLM boundary hardening | BAML for typed digest/critique first; enrichment second | planned |
+| Web grounding | Exa-only `GroundingProvider`; enabled for demos; `none` only for offline/CI | planned |
 | LLM — enrichment | Gemini flash-lite via `google-genai` Interactions API | done |
 | LLM — digest generation | Gemini flash via `google-genai` Interactions API | done |
 | Agent harness | Antigravity SDK (`google-antigravity`) | done |
@@ -629,7 +654,7 @@ See [Finish Line Sprint](#finish-line-sprint-1010-checklist) for implementation 
 
 ### Beyond the research roadmap
 
-The policy/intelligence research work is now tracked as active R-lines (R2–R6) in the [Research-Driven Roadmap](#research-driven-roadmap-r1r6) — it is no longer "post-hackathon," since effort is not a constraint here. What genuinely sits outside that roadmap, gated by **external dependencies** rather than effort:
+The policy/intelligence research work is now tracked as active R-lines (R2–R6 plus R4a) in the [Research-Driven Roadmap](#research-driven-roadmap-r1r6--r4a) — it is no longer "post-hackathon," since effort is not a constraint here. What genuinely sits outside that roadmap, gated by **external dependencies** rather than effort:
 
 - **More ingest sources** (Readwise, Pocket, browser export) — each needs a separate third-party API/account integration; real external dependency, not internal work.
 - **Live longitudinal validation** of R6's POMDP and the delayed-feedback path — requires real users over real days; the gym can pressure-test the mechanism but cannot substitute for longitudinal ground truth (see the circular-validation note under R6).
@@ -759,6 +784,8 @@ Total: ~105 min of implementation. All contained; no schema changes; no new coll
 - GEPA (Agrawal et al., ICLR 2026 oral): https://arxiv.org/abs/2507.19457
 - GEPA in DSPy: https://dspy.ai/api/optimizers/GEPA/overview/
 - GEPA library: https://github.com/gepa-ai/gepa
+- BAML / BoundaryML: https://github.com/BoundaryML/baml
+- Exa API docs: https://exa.ai/docs/llms.txt
 - Contextual bandits / LinUCB (Li et al., WWW 2010): https://arxiv.org/abs/1003.0146
 - Letta sleep-time compute (prior art): https://www.letta.com/blog/sleep-time-compute/
 - MongoDB Atlas Vector Search: https://www.mongodb.com/docs/atlas/atlas-vector-search/

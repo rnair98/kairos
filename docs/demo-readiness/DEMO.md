@@ -167,6 +167,8 @@ Setup: [MCP_SETUP.md](../MCP_SETUP.md). Do **not** call `sync_google_headspace` 
 **Demo-fast MCP env:**
 
 ```json
+"GROUNDING_PROVIDER": "exa",
+"DIGEST_USE_WEB_GROUNDING": "true",
 "DIGEST_USE_GOOGLE_SEARCH": "false",
 "INTELLIGENCE_MOMENT_FIT_CHECK": "false",
 "SURFACE_SCORE_THRESHOLD": "0.08"
@@ -209,7 +211,7 @@ MCP and browser share MongoDB — bandit updates appear in Admin either way.
 
 | Risk | Mitigation |
 |------|------------|
-| Digest slow (10–25s) | `.env.demo` skips digest Google Search; link research runs in prep |
+| Digest slow (10–25s) | Keep Exa grounding enabled for the demo; rely on prep/link research and pre-warmed corpus. For offline rehearsal only, set `GROUNDING_PROVIDER=none`. |
 | `KAIROS_OK` on stage | **Surface now** / `just demo-surface` (atomic reset + heartbeat); close stale browser tabs |
 | Moment-fit blocks surface | `INTELLIGENCE_MOMENT_FIT_CHECK=false` in `.env.demo` |
 | Raw X URLs only | Run prep without `SKIP_CORPUS=1` |
