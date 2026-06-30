@@ -1,0 +1,29 @@
+PLAN.md
+  s_df4a3bfadc9022::t_87b1db21ff07ca 446
+  s_df4a3bfadc9022::t_f11029ad022376 453,788
+  s_df4a3bfadc9022::t_0c826406b1cfc4 388,657,787
+  s_df4a3bfadc9022::t_4b23e52b301df3 452,595
+  s_df4a3bfadc9022::t_0f9bad41d18ff8 406-416
+  s_df4a3bfadc9022::t_7f1ebc29577a66 400,444-445,447-451,454,484,594
+Justfile
+  s_df4a3bfadc9022::t_4b23e52b301df3 181-182
+  s_df4a3bfadc9022::t_907513dc617c4f 218-219
+docs/demo-readiness/DEMO.md
+  s_df4a3bfadc9022::t_4b23e52b301df3 170-171,214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "f402e5b32258029252e41b8ce61f83b6ea60b0ef",
+  "prompts": {},
+  "sessions": {
+    "s_df4a3bfadc9022": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f0c29-a5c7-7583-8852-576a463d292c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Rohit Nair <6954311+rnair98@users.noreply.github.com>"
+    }
+  }
+}
