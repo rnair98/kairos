@@ -107,7 +107,7 @@ def main() -> None:
     google_verify.add_argument(
         "--no-persist",
         action="store_true",
-        help="Do not write fused snapshot to MongoDB",
+        help="Do not write fused snapshot to the database",
     )
     google_verify.add_argument(
         "--location-type",
@@ -129,7 +129,7 @@ def main() -> None:
     )
     google_sync = google_sub.add_parser(
         "sync",
-        help="Sync Calendar + Gmail into headspace (persist to MongoDB)",
+        help="Sync Calendar + Gmail into headspace (persist to the database)",
     )
     google_sync.add_argument(
         "--user-id",
@@ -213,7 +213,7 @@ def main() -> None:
 
     ingest_cmd = sub.add_parser("ingest", help="Bookmark ingest pipelines")
     ingest_sub = ingest_cmd.add_subparsers(dest="ingest_command", required=True)
-    sync_parser = ingest_sub.add_parser("sync", help="Sync bookmarks from X API to MongoDB")
+    sync_parser = ingest_sub.add_parser("sync", help="Sync bookmarks from X API to the database")
     sync_parser.add_argument(
         "--max-pages",
         type=int,
@@ -241,7 +241,7 @@ def main() -> None:
         help="Full catalog sync (disable incremental early-stop)",
     )
 
-    bookmarks_cmd = sub.add_parser("bookmarks", help="Read bookmarks from MongoDB")
+    bookmarks_cmd = sub.add_parser("bookmarks", help="Read bookmarks from the database")
     bookmarks_sub = bookmarks_cmd.add_subparsers(dest="bookmarks_command", required=True)
     list_parser = bookmarks_sub.add_parser("list", help="List stored bookmarks")
     list_parser.add_argument(

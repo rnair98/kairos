@@ -25,7 +25,7 @@ Kairos is a **contextual bandit** over bookmark **clusters**, not a search engin
 
 ## UI ↔ backend contract
 
-The dashboard (`web/static/index.html`) talks to FastAPI (`web/app.py`). Everything else (CLI, MCP) shares MongoDB but may not hit the same process.
+The dashboard (`web/static/index.html`) talks to FastAPI (`web/app.py`). Everything else (CLI, MCP) shares Turso/libSQL but may not hit the same process.
 
 ### HTTP endpoints the UI uses
 
@@ -45,7 +45,7 @@ The dashboard (`web/static/index.html`) talks to FastAPI (`web/app.py`). Everyth
 | Google OAuth status | GET | `/api/google/status` | session user or `KAIROS_USER_ID` |
 | Live narration | SSE | `/api/stream` | `event_bus` (in-process only) |
 | Prep pipeline | POST | `/api/prep/start` | `dispatch_prep_job` → local or Arq |
-| Prep status | GET | `/api/prep/{job_id}` | Mongo `prep_jobs` |
+| Prep status | GET | `/api/prep/{job_id}` | the `prep_jobs` table |
 
 ### SSE event kinds (`data.kind`)
 
@@ -59,7 +59,7 @@ The dashboard (`web/static/index.html`) talks to FastAPI (`web/app.py`). Everyth
 | `feedback` | Refresh bandit + notifications |
 | `session` | Cycle start/finish |
 
-**Important:** SSE replays in-process history **and** Mongo `pipeline_events` when `EVENT_PERSIST_ENABLED=true`, so CLI heartbeats that persist events still appear in the admin log after refresh.
+**Important:** SSE replays in-process history **and** the `pipeline_events` table when `EVENT_PERSIST_ENABLED=true`, so CLI heartbeats that persist events still appear in the admin log after refresh.
 
 ### Notification statuses
 
@@ -98,7 +98,7 @@ uv run kairos bookmarks enrich && research && embed && cluster
 | GEPA | Pydantic `models/optimize.py` | `GepaRunResult`, `FixtureEvalResult` |
 | Sensors | Pydantic `models/sensors.py` | `CalendarEvent`, `FuseHeadspacePayload` |
 | Pipeline stages | `@dataclass` in `bookmarks/` | `PipelineResult`, `EnrichResult`, `ClusterResult` |
-| SSE | `@dataclass` `AgentEvent` | In-process + Mongo replay |
+| SSE | `@dataclass` `AgentEvent` | In-process + db replay |
 
 Prefer Pydantic at **API and persistence boundaries**; keep lightweight dataclasses for internal stage counters. JSON serialization uses **orjson** (`orjson.dumps` / `orjson.loads`).
 
@@ -127,7 +127,7 @@ Prefer Pydantic at **API and persistence boundaries**; keep lightweight dataclas
 | Sidebar bookmark count | Sums cluster `member_count` — noise bookmarks excluded |
 | Partial research failure | Exit 0 if any succeeded; Justfile may still show ⚠ |
 | Snooze survives demo reset | TTL 120m; cluster blocked per `context_class` |
-| SSE only in-process | Mongo `pipeline_events` replays when `EVENT_PERSIST_ENABLED=true` |
+| SSE only in-process | the `pipeline_events` table replays when `EVENT_PERSIST_ENABLED=true` |
 
 ---
 
@@ -167,7 +167,5 @@ manimgl scripts/manim/kairos_flow.py KairosFlow
 ## Related docs
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — system design
-- [demo-readiness/DEMO.md](./demo-readiness/DEMO.md) — stage runbook
-- [demo-readiness/FAQ.md](./demo-readiness/FAQ.md) — judge Q&A
 - [MCP_SETUP.md](./MCP_SETUP.md) — agent path
 - [LOCAL_QUEUE.md](./LOCAL_QUEUE.md) — optional Arq + Redis for prep jobs

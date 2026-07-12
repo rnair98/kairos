@@ -1,4 +1,4 @@
-"""X API → MongoDB bookmark sync orchestration."""
+"""X API → the database bookmark sync orchestration."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 
 from kairos.db.bookmarks import ensure_bookmark_indexes, get_by_x_tweet_id, upsert_bookmark
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.db.sync_state import update_sync_state
 from kairos.ingest.enrich import enrich_bookmark_documents
 from kairos.ingest.x.client import XApiClient, XApiError
@@ -39,7 +39,7 @@ async def sync_bookmarks_from_x(
     enrich_concurrency: int | None = None,
     close_after: bool = True,
 ) -> SyncResult:
-    """Paginate X bookmarks, normalize, upsert to MongoDB.
+    """Paginate X bookmarks, normalize, upsert to the database.
 
     When ``incremental=True``, stop after the first page where every tweet is
     already stored with unchanged ``raw_text`` (bookmarks API returns newest first).
@@ -134,7 +134,7 @@ async def sync_bookmarks_from_x(
             stop_reason=result.stop_reason,
         )
         if close_after:
-            await close_mongo()
+            await close_db()
 
     return result
 

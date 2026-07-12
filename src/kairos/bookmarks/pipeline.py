@@ -104,7 +104,7 @@ async def run_incremental_pipeline(
     recluster_if_stale: bool = True,
     enrich_concurrency: int | None = None,
 ) -> PipelineResult:
-    """Fetch new/changed bookmarks from X, then process only stale rows in MongoDB."""
+    """Fetch new/changed bookmarks from X, then process only stale rows in the database."""
     return await run_bookmark_prep(
         sync=True,
         incremental_sync=incremental_sync,

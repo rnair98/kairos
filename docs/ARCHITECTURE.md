@@ -2,7 +2,7 @@
 
 Kairos is a **contextual bandit** that learns **when** to surface bookmark *clusters* — not a search engine, not a cron digest. Silence (`KAIROS_OK`) is the default; interrupt only when calendar capacity, topical fit, and learned engagement align.
 
-This document maps the running system in `src/kairos/`. For product thesis and build order, see [PLAN.md](../PLAN.md).
+This document maps the running system in `src/kairos/`. For product thesis and roadmap, see [PLAN.md](../PLAN.md).
 
 ---
 
@@ -26,7 +26,7 @@ flowchart TB
     subgraph Data["Data plane"]
         Ingest["Ingest + enrich"]
         Embed["Embed + cluster"]
-        Mongo[(MongoDB)]
+        Db[(Turso/libSQL)]
     end
 
     subgraph External["External services"]
@@ -48,7 +48,7 @@ flowchart TB
     Intel --> Ctx
     HS --> Rank
     HS --> Del
-    HS --> Mongo
+    HS --> Db
 
     Rank --> Embed
     Rank --> Gemini
@@ -57,9 +57,9 @@ flowchart TB
 
     Ingest --> XAPI
     Ingest --> Gemini
-    Ingest --> Mongo
+    Ingest --> Db
     Embed --> Gemini
-    Embed --> Mongo
+    Embed --> Db
 
     Del --> Bus
     Bus --> SSE
@@ -87,7 +87,7 @@ flowchart TB
 
 ## 1. Ingest layer
 
-Pulls bookmarks from X, normalizes API payloads, and upserts into MongoDB. **Enrichment is off during sync by default** — run `kairos bookmarks prep` or `kairos bookmarks enrich` separately.
+Pulls bookmarks from X, normalizes API payloads, and upserts into Turso/libSQL. **Enrichment is off during sync by default** — run `kairos bookmarks prep` or `kairos bookmarks enrich` separately.
 
 ```mermaid
 flowchart LR
@@ -107,7 +107,7 @@ flowchart LR
         Gen["generation.py"]
     end
 
-    subgraph Store["MongoDB"]
+    subgraph Store["Turso/libSQL"]
         BM[("bookmarks")]
     end
 
@@ -169,7 +169,7 @@ flowchart TB
 
 **Incremental pipeline** (`bookmarks/pipeline.py`): optional X sync → enrich → research → embed → cluster. Skips re-cluster when no new embeddings and no unclustered rows. Stable cluster IDs when centroid reuse ≥ `CLUSTER_ID_REUSE_THRESHOLD`.
 
-**Background prep:** `POST /api/prep/start` → `dispatch_prep_job` (FastAPI background or Arq worker). Status in Mongo `prep_jobs`.
+**Background prep:** `POST /api/prep/start` → `dispatch_prep_job` (FastAPI background or Arq worker). Status in the `prep_jobs` table.
 
 **CLI:** `kairos bookmarks prep`, `kairos bookmarks embed`, `kairos bookmarks cluster`, `kairos bookmarks clusters`
 
@@ -294,7 +294,7 @@ sequenceDiagram
 
 **Policy vs intelligence:** bandit + hard gates stay deterministic. Gemini adds narrative enrichment (every tick), moment-fit check (surface path only), and digest quality (surface path only).
 
-**Performance:** budget/gap gates run before vector encode + bandit batch fetch; moment-fit and digest only run when hard gates + score threshold pass. Cluster and bookmark ranking use Atlas `$vectorSearch` when indexes exist, with in-memory cosine fallback. Evergreen clusters skip Google Search grounding during digest (`digest_skip_search_evergreen`). Snooze is scoped per **user × context_class**.
+**Performance:** budget/gap gates run before vector encode + bandit batch fetch; moment-fit and digest only run when hard gates + score threshold pass. Cluster and bookmark ranking use libSQL vector search when indexes exist, with in-memory cosine fallback. Evergreen clusters skip Google Search grounding during digest (`digest_skip_search_evergreen`). Snooze is scoped per **user × context_class**.
 
 ---
 
@@ -414,7 +414,7 @@ flowchart TB
         Status["update_notification_status"]
     end
 
-    subgraph Mongo[(MongoDB)]
+    subgraph Db[(Turso/libSQL)]
         FE[("feedback_events")]
         BP[("bandit_params")]
         NT[("notifications")]
@@ -462,7 +462,7 @@ flowchart LR
 
 ## 8. Observability + web gateway
 
-In-process pub/sub streams agent activity to the dashboard admin panel. When `EVENT_PERSIST_ENABLED=true`, events are also written to Mongo `pipeline_events` (TTL) so CLI/MCP heartbeats appear in the admin log after browser refresh.
+In-process pub/sub streams agent activity to the dashboard admin panel. When `EVENT_PERSIST_ENABLED=true`, events are also written to the `pipeline_events` table (TTL) so CLI/MCP heartbeats appear in the admin log after browser refresh.
 
 ```mermaid
 flowchart TB
@@ -622,7 +622,7 @@ mindmap
 
 ---
 
-## 11. MongoDB collections
+## 11. Database tables
 
 ```mermaid
 erDiagram
@@ -802,30 +802,30 @@ sequenceDiagram
     participant User
     participant X as X API
     participant Ingest
-    participant Mongo
+    participant Db
     participant Heartbeat
     participant Rank
     participant Web
     participant Bandit
 
-    Note over X,Mongo: Data plane (batch / incremental)
+    Note over X,Db: Data plane (batch / incremental)
     User->>Ingest: kairos bookmarks prep --sync
     Ingest->>X: GET bookmarks
     X-->>Ingest: tweets
-    Ingest->>Mongo: bookmarks + enrichment + research + embeddings + clusters
+    Ingest->>Db: bookmarks + enrichment + research + embeddings + clusters
 
     Note over User,Bandit: Policy plane (heartbeat loop)
     User->>Heartbeat: kairos heartbeat / POST /api/heartbeat
     Heartbeat->>Heartbeat: prepare_context_for_decision
     Heartbeat->>Rank: evaluate_surface
-    Rank->>Mongo: clusters, bandit_params
+    Rank->>Db: clusters, bandit_params
     Rank-->>Heartbeat: SURFACE + digest
-    Heartbeat->>Mongo: save notification
+    Heartbeat->>Db: save notification
     Heartbeat->>Web: EventBus → SSE → inbox
 
     User->>Web: Dismiss / Snooze
     Web->>Heartbeat: POST /api/feedback
-    Heartbeat->>Mongo: feedback_events + bandit_params + bandit_treatments
+    Heartbeat->>Db: feedback_events + bandit_params + bandit_treatments
     Heartbeat->>Web: SSE feedback event
 
     User->>Heartbeat: next heartbeat
@@ -853,7 +853,7 @@ Central settings in `config.py` (env + `.env`):
 | `INTELLIGENCE_DIGEST_MULTISTEP` | `true` | Critique + revise digest (off when runtime fast) |
 | `INTELLIGENCE_DIGEST_RUNTIME_FAST` | `false` | Single LLM digest call at surface (demo: `true`) |
 | `CLUSTER_ID_REUSE_THRESHOLD` | `0.88` | Keep cluster_id when centroid matches |
-| `EVENT_PERSIST_ENABLED` | `true` | Persist pipeline events to Mongo for SSE replay |
+| `EVENT_PERSIST_ENABLED` | `true` | Persist pipeline events to the database for SSE replay |
 | `JOB_BACKEND` | `local` | `local` or `arq` for prep jobs |
 | `HEARTBEAT_DEFAULT_VIA_AGENT` | `false` | Web heartbeat uses ADK when true |
 | `GEPA_ENABLED` | `true` | Enable GEPA reflection pass |
@@ -878,11 +878,11 @@ src/kairos/
 │   └── eval_harness.py    # GEPA fixture eval
 ├── models/                # Pydantic: schemas, jobs, optimize
 ├── llm/                   # Gemini generation, compose, interactions
-├── db/                    # MongoDB repositories
+├── db/                    # Turso/libSQL repositories
 ├── delivery/              # Web + OS adapters
 ├── embeddings/            # Local + Gemini encoders
 ├── ingest/                # X OAuth, sync, normalize
-├── observability/         # EventBus + Mongo pipeline_events
+├── observability/         # EventBus + db pipeline_events
 ├── web/                   # FastAPI + static dashboard
 └── mcp/                   # FastMCP server (stdio)
 ```
@@ -891,9 +891,7 @@ src/kairos/
 
 ## Related docs
 
-- [PLAN.md](../PLAN.md) — product thesis and original build order
+- [PLAN.md](../PLAN.md) — product thesis and roadmap
 - [TECH_DEBT.md](TECH_DEBT.md) — simplification roadmap + what's next
 - [LOCAL_QUEUE.md](LOCAL_QUEUE.md) — optional Arq prep queue
-- [demo-readiness/DEMO.md](demo-readiness/DEMO.md) — stage runbook
-- [demo-readiness/FAQ.md](demo-readiness/FAQ.md) — judge Q&A
-- [archive/](archive/) — hackathon phase logs + research notes
+- [archive/](archive/) — research notes

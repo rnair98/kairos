@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from kairos.config import settings
-from kairos.db.mongo import get_database
+from kairos.db.feedback import list_feedback_sample
 from kairos.db.optimization_runs import get_active_prompt, save_optimization_run
 from kairos.llm.interactions import create_interaction
 from kairos.llm.generation import _DEFAULT_DIGEST_PROMPT
@@ -30,21 +30,7 @@ async def _load_feedback_sample(
     days: int = 14,
     exclude_sim: bool = False,
 ) -> list[dict[str, Any]]:
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    match: dict[str, Any] = {
-        "created_at": {"$gte": since},
-        "notification_text": {"$exists": True, "$ne": ""},
-        "derived_reward": {"$ne": None},
-    }
-    if exclude_sim:
-        match["sim"] = {"$ne": True}
-    cursor = (
-        get_database()["feedback_events"]
-        .find(match, {"notification_text": 1, "derived_reward": 1, "digest_style": 1})
-        .sort("created_at", -1)
-        .limit(limit)
-    )
-    return await cursor.to_list(length=limit)
+    return await list_feedback_sample(limit=limit, days=days, exclude_sim=exclude_sim)
 
 
 def _format_examples(events: list[dict[str, Any]], positive: bool) -> str:

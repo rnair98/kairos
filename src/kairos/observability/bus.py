@@ -32,7 +32,7 @@ class AgentEvent:
 
 
 class EventBus:
-    """Async pub/sub with optional Mongo persistence for cross-process SSE."""
+    """Async pub/sub with optional database persistence for cross-process SSE."""
 
     def __init__(self) -> None:
         self._subscribers: list[asyncio.Queue[AgentEvent]] = []

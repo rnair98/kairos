@@ -263,7 +263,7 @@ LINE C: Prompt RSI (GEPA + traces)            — HOW WELL digests read (offline
 5. Neural bandits before thousands of feedback events
 6. Full Letta Agent integration
 
-### Build order (final)
+### Roadmap Sequence
 
 ```text
 NOW     Phase 1  Sleep cache + dual-agent sleep worker
@@ -288,12 +288,10 @@ NEVER   MemGPT OS, memory models, spaced-rep core, Letta SDK
 
 ## Related docs in repo
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — system map
-- [PLAN.md](../PLAN.md) — build order, GEPA, two-loop design
-- [demo-readiness/DEMO.md](./demo-readiness/DEMO.md) — stage runbook (`just demo`)
-- [demo-readiness/FAQ.md](./demo-readiness/FAQ.md) — Letta vs Kairos positioning
-- [CLOUD_RUN.md](./CLOUD_RUN.md) — deploy, vector search, slim image
-- [AGENTS.md](../AGENTS.md) — workspace facts for agents
+- [ARCHITECTURE.md](../../ARCHITECTURE.md) — system map
+- [PLAN.md](../../../PLAN.md) — roadmap, GEPA, two-loop design
+- [CLOUD_RUN.md](../../CLOUD_RUN.md) — deploy, vector search, slim image
+- [AGENTS.md](../../../AGENTS.md) — workspace facts for agents
 
 ## Key external references
 

@@ -8,7 +8,7 @@ from kairos.core.moment import context_class
 from kairos.core.rewards import reward_for_action
 from kairos.db.bandit import apply_bandit_reward, apply_treatment_reward, ensure_bandit_indexes
 from kairos.db.feedback import ensure_feedback_indexes, insert_feedback_event
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.db.notifications import get_notification, update_notification_status
 from kairos.delivery.render import digest_to_markdown
 from kairos.models.schemas import FeedbackAction, NotificationStatus
@@ -115,4 +115,4 @@ async def process_feedback(
             )
         return result
     finally:
-        await close_mongo()
+        await close_db()

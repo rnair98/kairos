@@ -116,7 +116,7 @@
   <script>
     function walkthrough() {
       const prep = [
-        { id: 'x', label: 'X API', title: 'Sync bookmarks', body: 'kairos ingest sync pulls your saved tweets into MongoDB — raw text, URLs, author.', api: 'CLI: kairos ingest sync' },
+        { id: 'x', label: 'X API', title: 'Sync bookmarks', body: 'kairos ingest sync pulls your saved tweets into the database — raw text, URLs, author.', api: 'CLI: kairos ingest sync' },
         { id: 'enrich', label: 'Enrich', title: 'Classify each bookmark', body: 'Gemini adds topic tags, consumption mode, energy cost.', api: 'just demo-corpus → enrich' },
         { id: 'fetch', label: 'Link fetch', title: 'Read the article', body: 'HTTP fetch follows t.co → extracts title, description, body excerpt.', api: 'bookmarks/research.py + link_fetch.py' },
         { id: 'research', label: 'Research', title: 'Summarize for cards', body: 'Gemini writes research_summary + validation signal — persisted so prep is not repeated.', api: 'kairos bookmarks research' },

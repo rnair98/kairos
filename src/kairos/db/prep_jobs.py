@@ -6,15 +6,12 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from kairos.db.mongo import get_database
+from kairos.db.engine import doc_dumps, doc_loads, iso, run
 from kairos.models.jobs import PrepJobParams, PrepJobRecord, PrepJobResult, PrepJobStatus
-
-COLLECTION = "prep_jobs"
 
 
 def _parse_prep_job(doc: dict[str, Any]) -> PrepJobRecord:
     doc = dict(doc)
-    doc.pop("_id", None)
     params = doc.get("params") or {}
     result = doc.get("result")
     return PrepJobRecord(
@@ -29,13 +26,10 @@ def _parse_prep_job(doc: dict[str, Any]) -> PrepJobRecord:
 
 
 async def ensure_prep_job_indexes() -> None:
-    db = get_database()
-    await db[COLLECTION].create_index("job_id", unique=True)
-    await db[COLLECTION].create_index([("created_at", -1)])
+    """Schema (tables + indexes) is created by the engine — nothing to do."""
 
 
 async def create_prep_job(*, params: PrepJobParams | dict[str, Any] | None = None) -> PrepJobRecord:
-    await ensure_prep_job_indexes()
     parsed = PrepJobParams.model_validate(params or {})
     job_id = str(uuid4())
     now = datetime.now(timezone.utc)
@@ -48,7 +42,15 @@ async def create_prep_job(*, params: PrepJobParams | dict[str, Any] | None = Non
         "result": None,
         "error": None,
     }
-    await get_database()[COLLECTION].insert_one(doc)
+    await run(
+        lambda conn: conn.execute(
+            """
+            INSERT INTO prep_jobs (job_id, status, created_at, updated_at, doc)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (job_id, "pending", iso(now), iso(now), doc_dumps(doc)),
+        )
+    )
     return _parse_prep_job(doc)
 
 
@@ -59,7 +61,8 @@ async def update_prep_job(
     result: PrepJobResult | dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
-    fields: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+    now = datetime.now(timezone.utc)
+    fields: dict[str, Any] = {"updated_at": now}
     if status is not None:
         fields["status"] = status
     if result is not None:
@@ -69,11 +72,31 @@ async def update_prep_job(
             fields["result"] = result
     if error is not None:
         fields["error"] = error
-    await get_database()[COLLECTION].update_one({"job_id": job_id}, {"$set": fields})
+
+    def _task(conn: Any) -> None:
+        row = conn.execute(
+            "SELECT doc FROM prep_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if not row:
+            return
+        doc = doc_loads(row[0])
+        doc.update(fields)
+        conn.execute(
+            "UPDATE prep_jobs SET status = ?, updated_at = ?, doc = ? WHERE job_id = ?",
+            (doc.get("status"), iso(now), doc_dumps(doc), job_id),
+        )
+
+    await run(_task)
 
 
 async def get_prep_job(job_id: str) -> PrepJobRecord | None:
-    doc = await get_database()[COLLECTION].find_one({"job_id": job_id})
+    def _task(conn: Any) -> dict[str, Any] | None:
+        row = conn.execute(
+            "SELECT doc FROM prep_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        return doc_loads(row[0]) if row else None
+
+    doc = await run(_task)
     if not doc:
         return None
     return _parse_prep_job(doc)

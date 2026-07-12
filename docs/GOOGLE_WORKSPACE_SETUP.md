@@ -5,7 +5,7 @@ Google access is **not tied to the web app**. Users consent via a **loopback OAu
 - **MCP tools** (`connect_google`, `start_google_connect` + `wait_google_connect`)
 - **CLI** (`kairos google connect`)
 
-Tokens are stored per user in MongoDB (`google_connections`).
+Tokens are stored per user in the database (`google_connections`).
 
 ## 1. GCP OAuth client (Desktop)
 
@@ -96,7 +96,7 @@ User → authorization_url (browser)
          ↓
 http://127.0.0.1:8766/callback  (Kairos listener — MCP or CLI)
          ↓
-MongoDB google_connections[user_id]
+google_connections[user_id] (libSQL)
          ↓
 sync_google_headspace → context_cache[user_id] → run_heartbeat   (CLI/cron/MCP)
          OR
@@ -110,5 +110,5 @@ The ADK harness (`src/kairos/agent/agent.py`) connects to Google Workspace remot
 - `https://calendarmcp.googleapis.com/mcp/v1`
 - `https://gmailmcp.googleapis.com/mcp/v1`
 
-OAuth tokens from `connect_google` / MongoDB are injected per request via `header_provider`.
+OAuth tokens from `connect_google` / the database are injected per request via `header_provider`.
 Run locally with `uv run kairos agent-cycle` or deploy with `adk deploy cloud_run`.

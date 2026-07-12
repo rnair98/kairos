@@ -7,10 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "google-genai>=2.3.0",
     "httpx2>=0.28",
-    "motor>=3.6",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    "pymongo[srv]>=4.17.0",
+    "libsql>=0.1.11",
     "python-dotenv>=1.0",
     "hdbscan>=0.8",
     "numpy>=1.26",
@@ -50,3 +49,9 @@ packages = ["src/kairos"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/kairos"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

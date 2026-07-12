@@ -6,15 +6,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from kairos.config import settings
-from kairos.db.mongo import get_database
+from kairos.db.engine import iso, rows_as_dicts, run
 
-COLLECTION = "bandit_params"
-TREATMENT_COLLECTION = "bandit_treatments"
 DEFAULT_ALPHA = 1.0
 DEFAULT_BETA = 1.0
 
 
-async def _cohort_prior(
+def _cohort_prior_sync(
+    conn: Any,
     cluster_id: str,
     context_class: str,
     *,
@@ -23,30 +22,17 @@ async def _cohort_prior(
     """Mean α/β from other users on the same cluster×context (cold-start prior)."""
     if not settings.cohort_prior_enabled:
         return None
-    pipeline = [
-        {
-            "$match": {
-                "cluster_id": cluster_id,
-                "context_class": context_class,
-                "user_id": {"$ne": exclude_user_id},
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                "alpha": {"$avg": "$alpha"},
-                "beta": {"$avg": "$beta"},
-                "users": {"$addToSet": "$user_id"},
-            }
-        },
-    ]
-    rows = await get_database()[COLLECTION].aggregate(pipeline).to_list(length=1)
-    if not rows:
+    row = conn.execute(
+        """
+        SELECT AVG(alpha) AS alpha, AVG(beta) AS beta, COUNT(DISTINCT user_id) AS users
+        FROM bandit_params
+        WHERE cluster_id = ? AND context_class = ? AND user_id != ?
+        """,
+        (cluster_id, context_class, exclude_user_id),
+    ).fetchone()
+    if not row or row[0] is None or (row[2] or 0) < settings.cohort_prior_min_users:
         return None
-    row = rows[0]
-    if len(row.get("users") or []) < settings.cohort_prior_min_users:
-        return None
-    return float(row["alpha"]), float(row["beta"])
+    return float(row[0]), float(row[1])
 
 
 def _apply_prior(params: dict[str, Any], prior: tuple[float, float] | None) -> dict[str, Any]:
@@ -69,30 +55,36 @@ def bandit_user_id(user_id: str | None = None) -> str:
 
 
 async def ensure_bandit_indexes() -> None:
-    db = get_database()
-    # Drop the pre-multi-user unique index if present — uniqueness on
-    # (cluster_id, context_class) without user_id would forbid two users from
-    # sharing a cluster×context pair and breaks multi-user scoping.
-    try:
-        existing = await db[COLLECTION].index_information()
-        legacy = existing.get("cluster_id_1_context_class_1")
-        if legacy and legacy.get("unique"):
-            await db[COLLECTION].drop_index("cluster_id_1_context_class_1")
-    except Exception:  # noqa: BLE001 — best-effort migration on fresh installs
-        pass
+    """Schema (tables + indexes) is created by the engine — nothing to do."""
 
-    await db[COLLECTION].create_index(
-        [("user_id", 1), ("cluster_id", 1), ("context_class", 1)],
-        unique=True,
-    )
-    # Non-unique secondary index for legacy cross-user queries (best-effort).
-    try:
-        await db[COLLECTION].create_index(
-            [("cluster_id", 1), ("context_class", 1)],
-            name="cluster_context_lookup",
+
+def _defaults(uid: str, cluster_id: str, context_class: str) -> dict[str, Any]:
+    return {
+        "user_id": uid,
+        "cluster_id": cluster_id,
+        "context_class": context_class,
+        "alpha": DEFAULT_ALPHA,
+        "beta": DEFAULT_BETA,
+    }
+
+
+def _fetch_params_sync(
+    conn: Any, uid: str, cluster_id: str, context_class: str
+) -> dict[str, Any]:
+    rows = rows_as_dicts(
+        conn.execute(
+            """
+            SELECT user_id, cluster_id, context_class, alpha, beta, cohort_prior, last_updated
+            FROM bandit_params
+            WHERE user_id = ? AND cluster_id = ? AND context_class = ?
+            """,
+            (uid, cluster_id, context_class),
         )
-    except Exception:  # noqa: BLE001
-        pass
+    )
+    if rows:
+        return rows[0]
+    prior = _cohort_prior_sync(conn, cluster_id, context_class, exclude_user_id=uid)
+    return _apply_prior(_defaults(uid, cluster_id, context_class), prior)
 
 
 async def get_bandit_params(
@@ -103,20 +95,7 @@ async def get_bandit_params(
 ) -> dict[str, Any]:
     """Return α/β for a user×cluster×context pair, creating defaults if missing."""
     uid = bandit_user_id(user_id)
-    doc = await get_database()[COLLECTION].find_one(
-        {"user_id": uid, "cluster_id": cluster_id, "context_class": context_class}
-    )
-    if doc:
-        return doc
-    defaults = {
-        "user_id": uid,
-        "cluster_id": cluster_id,
-        "context_class": context_class,
-        "alpha": DEFAULT_ALPHA,
-        "beta": DEFAULT_BETA,
-    }
-    prior = await _cohort_prior(cluster_id, context_class, exclude_user_id=uid)
-    return _apply_prior(defaults, prior)
+    return await run(lambda conn: _fetch_params_sync(conn, uid, cluster_id, context_class))
 
 
 async def get_bandit_params_batch(
@@ -129,28 +108,30 @@ async def get_bandit_params_batch(
     if not cluster_ids:
         return {}
     uid = bandit_user_id(user_id)
-    cursor = get_database()[COLLECTION].find(
-        {
-            "user_id": uid,
-            "cluster_id": {"$in": cluster_ids},
-            "context_class": context_class,
-        }
-    )
-    docs = await cursor.to_list(length=len(cluster_ids))
-    by_cluster = {doc["cluster_id"]: doc for doc in docs}
-    for cluster_id in cluster_ids:
-        if cluster_id in by_cluster:
-            continue
-        defaults = {
-            "user_id": uid,
-            "cluster_id": cluster_id,
-            "context_class": context_class,
-            "alpha": DEFAULT_ALPHA,
-            "beta": DEFAULT_BETA,
-        }
-        prior = await _cohort_prior(cluster_id, context_class, exclude_user_id=uid)
-        by_cluster[cluster_id] = _apply_prior(defaults, prior)
-    return by_cluster
+
+    def _task(conn: Any) -> dict[str, dict[str, Any]]:
+        placeholders = ",".join("?" for _ in cluster_ids)
+        rows = rows_as_dicts(
+            conn.execute(
+                f"""
+                SELECT user_id, cluster_id, context_class, alpha, beta, cohort_prior, last_updated
+                FROM bandit_params
+                WHERE user_id = ? AND context_class = ? AND cluster_id IN ({placeholders})
+                """,
+                (uid, context_class, *cluster_ids),
+            )
+        )
+        by_cluster = {row["cluster_id"]: row for row in rows}
+        for cluster_id in cluster_ids:
+            if cluster_id in by_cluster:
+                continue
+            prior = _cohort_prior_sync(conn, cluster_id, context_class, exclude_user_id=uid)
+            by_cluster[cluster_id] = _apply_prior(
+                _defaults(uid, cluster_id, context_class), prior
+            )
+        return by_cluster
+
+    return await run(_task)
 
 
 async def apply_bandit_reward(
@@ -164,31 +145,38 @@ async def apply_bandit_reward(
     now = datetime.now(timezone.utc)
     uid = bandit_user_id(user_id)
     alpha_delta, beta_delta = (reward, 0.0) if reward > 0 else (0.0, abs(reward))
-    params = await get_bandit_params(cluster_id, context_class, user_id=uid)
-    new_alpha = float(params.get("alpha", DEFAULT_ALPHA)) + alpha_delta
-    new_beta = float(params.get("beta", DEFAULT_BETA)) + beta_delta
-    db = get_database()
-    await db[COLLECTION].update_one(
-        {"user_id": uid, "cluster_id": cluster_id, "context_class": context_class},
-        {
-            "$set": {
-                "user_id": uid,
-                "cluster_id": cluster_id,
-                "context_class": context_class,
-                "alpha": new_alpha,
-                "beta": new_beta,
-                "last_updated": now,
-            }
-        },
-        upsert=True,
-    )
-    return {
-        "user_id": uid,
-        "cluster_id": cluster_id,
-        "context_class": context_class,
-        "alpha": new_alpha,
-        "beta": new_beta,
-    }
+
+    def _task(conn: Any) -> dict[str, Any]:
+        params = _fetch_params_sync(conn, uid, cluster_id, context_class)
+        new_alpha = float(params.get("alpha", DEFAULT_ALPHA)) + alpha_delta
+        new_beta = float(params.get("beta", DEFAULT_BETA)) + beta_delta
+        conn.execute(
+            """
+            INSERT INTO bandit_params (user_id, cluster_id, context_class, alpha, beta, cohort_prior, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id, cluster_id, context_class)
+            DO UPDATE SET alpha = excluded.alpha, beta = excluded.beta,
+                          last_updated = excluded.last_updated
+            """,
+            (
+                uid,
+                cluster_id,
+                context_class,
+                new_alpha,
+                new_beta,
+                1 if params.get("cohort_prior") else 0,
+                iso(now),
+            ),
+        )
+        return {
+            "user_id": uid,
+            "cluster_id": cluster_id,
+            "context_class": context_class,
+            "alpha": new_alpha,
+            "beta": new_beta,
+        }
+
+    return await run(_task)
 
 
 async def get_treatment_params(
@@ -200,24 +188,30 @@ async def get_treatment_params(
 ) -> dict[str, Any]:
     """Return α/β for a user×cluster×context×treatment tuple (GAMBITTS-lite)."""
     uid = bandit_user_id(user_id)
-    doc = await get_database()[TREATMENT_COLLECTION].find_one(
-        {
+
+    def _task(conn: Any) -> dict[str, Any]:
+        rows = rows_as_dicts(
+            conn.execute(
+                """
+                SELECT user_id, cluster_id, context_class, digest_style, alpha, beta, last_updated
+                FROM bandit_treatments
+                WHERE user_id = ? AND cluster_id = ? AND context_class = ? AND digest_style = ?
+                """,
+                (uid, cluster_id, context_class, digest_style),
+            )
+        )
+        if rows:
+            return rows[0]
+        return {
             "user_id": uid,
             "cluster_id": cluster_id,
             "context_class": context_class,
             "digest_style": digest_style,
+            "alpha": DEFAULT_ALPHA,
+            "beta": DEFAULT_BETA,
         }
-    )
-    if doc:
-        return doc
-    return {
-        "user_id": uid,
-        "cluster_id": cluster_id,
-        "context_class": context_class,
-        "digest_style": digest_style,
-        "alpha": DEFAULT_ALPHA,
-        "beta": DEFAULT_BETA,
-    }
+
+    return await run(_task)
 
 
 async def apply_treatment_reward(
@@ -232,47 +226,66 @@ async def apply_treatment_reward(
     now = datetime.now(timezone.utc)
     uid = bandit_user_id(user_id)
     alpha_delta, beta_delta = (reward, 0.0) if reward > 0 else (0.0, abs(reward))
-    params = await get_treatment_params(cluster_id, context_class, digest_style, user_id=uid)
-    new_alpha = float(params.get("alpha", DEFAULT_ALPHA)) + alpha_delta
-    new_beta = float(params.get("beta", DEFAULT_BETA)) + beta_delta
-    db = get_database()
-    await db[TREATMENT_COLLECTION].update_one(
-        {
+
+    def _task(conn: Any) -> dict[str, Any]:
+        row = conn.execute(
+            """
+            SELECT alpha, beta FROM bandit_treatments
+            WHERE user_id = ? AND cluster_id = ? AND context_class = ? AND digest_style = ?
+            """,
+            (uid, cluster_id, context_class, digest_style),
+        ).fetchone()
+        alpha = float(row[0]) if row else DEFAULT_ALPHA
+        beta = float(row[1]) if row else DEFAULT_BETA
+        new_alpha = alpha + alpha_delta
+        new_beta = beta + beta_delta
+        conn.execute(
+            """
+            INSERT INTO bandit_treatments (user_id, cluster_id, context_class, digest_style, alpha, beta, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (user_id, cluster_id, context_class, digest_style)
+            DO UPDATE SET alpha = excluded.alpha, beta = excluded.beta,
+                          last_updated = excluded.last_updated
+            """,
+            (uid, cluster_id, context_class, digest_style, new_alpha, new_beta, iso(now)),
+        )
+        return {
             "user_id": uid,
             "cluster_id": cluster_id,
             "context_class": context_class,
             "digest_style": digest_style,
-        },
-        {
-            "$set": {
-                "user_id": uid,
-                "cluster_id": cluster_id,
-                "context_class": context_class,
-                "digest_style": digest_style,
-                "alpha": new_alpha,
-                "beta": new_beta,
-                "last_updated": now,
-            }
-        },
-        upsert=True,
-    )
-    return {
-        "user_id": uid,
-        "cluster_id": cluster_id,
-        "context_class": context_class,
-        "digest_style": digest_style,
-        "alpha": new_alpha,
-        "beta": new_beta,
-    }
+            "alpha": new_alpha,
+            "beta": new_beta,
+        }
+
+    return await run(_task)
 
 
 async def list_bandit_params(*, limit: int = 20, user_id: str | None = None) -> list[dict[str, Any]]:
     uid = bandit_user_id(user_id)
-    query: dict[str, Any] = {"user_id": uid}
-    cursor = (
-        get_database()[COLLECTION]
-        .find(query)
-        .sort([("last_updated", -1)])
-        .limit(limit)
+    return await run(
+        lambda conn: rows_as_dicts(
+            conn.execute(
+                """
+                SELECT user_id, cluster_id, context_class, alpha, beta, cohort_prior, last_updated
+                FROM bandit_params
+                WHERE user_id = ?
+                ORDER BY last_updated DESC
+                LIMIT ?
+                """,
+                (uid, limit),
+            )
+        )
     )
-    return await cursor.to_list(length=limit)
+
+
+async def reset_bandit_params() -> int:
+    """Delete all bandit posteriors (gym reset). Returns rows removed."""
+
+    def _task(conn: Any) -> int:
+        n = conn.execute("SELECT COUNT(*) FROM bandit_params").fetchone()[0]
+        conn.execute("DELETE FROM bandit_params")
+        conn.execute("DELETE FROM bandit_treatments")
+        return int(n)
+
+    return await run(_task)

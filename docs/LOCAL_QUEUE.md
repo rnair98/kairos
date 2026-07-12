@@ -20,7 +20,7 @@ uv run kairos worker
 # or: just worker
 ```
 
-Poll job status: `GET /api/prep/{job_id}` (Mongo-backed; same as local mode).
+Poll job status: `GET /api/prep/{job_id}` (Database-backed; same as local mode).
 
 ## Config
 
@@ -42,4 +42,4 @@ uv run arq kairos.jobs.arq_settings.WorkerSettings   # equivalent
 
 ## When to stay on `local`
 
-Single-process demos (`just demo-serve`) and local dev don't need Redis. Mongo `prep_jobs` tracks status either way.
+Single-process demos (`just demo-serve`) and local dev don't need Redis. the `prep_jobs` table tracks status either way.

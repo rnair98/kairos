@@ -74,12 +74,12 @@ class Settings(BaseSettings):
     # Default heartbeat path is direct policy core; ADK agent for MCP sensor fusion
     heartbeat_default_via_agent: bool = False
 
-    mongodb_uri: str | None = None
-    mongodb_db_name: str = "kairos"
-    mongodb_vector_search_enabled: bool = True
-    mongodb_clusters_vector_index: str = "clusters_centroid"
-    mongodb_bookmarks_vector_index: str = "bookmarks_embedding"
-    vector_search_num_candidates: int = 100
+    # Storage — libSQL (Turso) local file; optional embedded-replica sync to a
+    # hosted Turso primary when both sync settings are present.
+    kairos_db_path: str = "kairos.db"
+    turso_database_url: str | None = None
+    turso_auth_token: str | None = None
+    vector_search_enabled: bool = True
 
     # X API v2 — https://docs.x.com/x-api/users/get-bookmarks
     x_api_base_url: str = "https://api.x.com"

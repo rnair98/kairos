@@ -7,7 +7,7 @@ import asyncio
 from kairos.config import settings
 from kairos.core.headspace import fuse_headspace
 from kairos.db.context_cache import load_context, save_context
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.models.schemas import ContextSnapshot
 from kairos.observability.bus import event_bus
 from kairos.observability.narrate import describe_headspace_read, describe_headspace_update
@@ -49,7 +49,7 @@ async def get_context_async(user_id: str | None = None) -> ContextSnapshot:
             _memory_context[cache_key] = cached
             return cached
     finally:
-        await close_mongo()
+        await close_db()
     return _default_stub()
 
 
@@ -76,7 +76,7 @@ async def write_context(
     try:
         await save_context(snapshot, user_id=user_id)
     finally:
-        await close_mongo()
+        await close_db()
     event_bus.emit(
         "context",
         describe_headspace_update(snapshot),

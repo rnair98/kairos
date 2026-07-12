@@ -8,16 +8,15 @@ Kairos learns **when** to interrupt with a topic cluster, not just **what** matc
 Silence is the default; feedback changes the policy.
 
 <p>
-  <a href="docs/demo-readiness/DEMO.md"><img alt="Demo ready" src="https://img.shields.io/badge/demo-runbook-111827?style=for-the-badge"></a>
   <a href="docs/ARCHITECTURE.md"><img alt="Architecture" src="https://img.shields.io/badge/system-architecture-2563eb?style=for-the-badge"></a>
   <a href="docs/DEVELOPER_GUIDE.md"><img alt="Developer guide" src="https://img.shields.io/badge/contributors-guide-059669?style=for-the-badge"></a>
-  <a href="docs/demo-readiness/FAQ.md"><img alt="Judge FAQ" src="https://img.shields.io/badge/judge-FAQ-b45309?style=for-the-badge"></a>
+  <a href="docs/MCP_SETUP.md"><img alt="MCP setup" src="https://img.shields.io/badge/MCP-setup-6b7280?style=for-the-badge"></a>
 </p>
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/python-3.12%2B-3776ab?style=flat-square">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-SSE-009688?style=flat-square">
-  <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-vector%20search-47a248?style=flat-square">
+  <img alt="Turso" src="https://img.shields.io/badge/Turso-libSQL%20vector%20search-4ff8d2?style=flat-square">
   <img alt="Gemini" src="https://img.shields.io/badge/Gemini-Interactions%20API-4285f4?style=flat-square">
   <img alt="MCP" src="https://img.shields.io/badge/MCP-Claude%20%2F%20Cursor-6b7280?style=flat-square">
 </p>
@@ -46,7 +45,7 @@ The core demo beat is simple: **dismiss a surface and watch beta increase**. No 
 ## Quick Start
 
 ```bash
-cp .env.example .env   # set MONGODB_URI and GEMINI_API_KEY
+cp .env.example .env   # set GEMINI_API_KEY (storage is a local kairos.db file — no setup needed)
 brew install just      # or: cargo install just
 
 just demo-serve
@@ -90,12 +89,10 @@ Read the full map in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## Demo And Contributor Docs
+## Contributor Docs
 
 | Start here | When you need |
 |------------|---------------|
-| [docs/demo-readiness/DEMO.md](docs/demo-readiness/DEMO.md) | Stage runbook, timing, recovery paths |
-| [docs/demo-readiness/FAQ.md](docs/demo-readiness/FAQ.md) | Judge Q&A: bandits vs RAG, GEPA, MCP, X API |
 | [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | UI/API contract, hotspots, extension checklist |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System diagrams and data model |
 | [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | What shipped, what to build next |
@@ -126,7 +123,7 @@ The strongest product rule: if it does not improve the interruption policy or ma
 
 ### Core Thesis: Learning When To Interrupt
 
-- [PLAN.md](PLAN.md) - product thesis, theme framing, and roadmap.
+- [PLAN.md](PLAN.md) - product thesis and roadmap.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - how the heartbeat, ranking, and feedback loop fit together.
 - [Contextual bandits / LinUCB](https://arxiv.org/abs/1003.0146) - the classic shape behind context-aware recommendation.
 - [Action-Centered Thompson Sampling](https://proceedings.neurips.cc/paper_files/paper/2017/hash/4f6ffe13a5d75b2d6a3923922b3922e5-Abstract.html) - useful mental model for interventions and feedback.
@@ -136,7 +133,6 @@ The strongest product rule: if it does not improve the interruption policy or ma
 - [docs/TECH_DEBT.md](docs/TECH_DEBT.md) - current "what next" list for making the stack stronger.
 - [GEPA paper](https://arxiv.org/abs/2507.19457) - prompt/program evolution from feedback signals.
 - [DSPy GEPA overview](https://dspy.ai/api/optimizers/GEPA/overview/) - production-oriented optimizer API inspiration.
-- [docs/archive/hackathon/VISION.md](docs/archive/hackathon/VISION.md) - longer-range positioning around GEPA, traces, and self-improvement.
 
 ### Agent Infrastructure And Observability
 
@@ -147,7 +143,7 @@ The strongest product rule: if it does not improve the interruption policy or ma
 
 ### Bookmark Intelligence And Data Plane
 
-- [MongoDB Atlas Vector Search](https://www.mongodb.com/docs/atlas/atlas-vector-search/) - cluster and bookmark ranking backend.
+- [Turso / libSQL vector search](https://docs.turso.tech/features/ai-and-embeddings) - cluster and bookmark ranking backend.
 - [HDBSCAN documentation](https://hdbscan.readthedocs.io/) - density clustering for noisy bookmark corpora.
 - [Google Gemini API docs](https://ai.google.dev/gemini-api/docs) - Gemini generation and embeddings reference.
 - [X API bookmarks endpoint](https://docs.x.com/x-api/users/get-bookmarks) - primary ingest path.

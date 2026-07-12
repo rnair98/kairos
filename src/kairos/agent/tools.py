@@ -10,7 +10,7 @@ from kairos.core.context import get_context_async, read_context, write_context
 from kairos.core.headspace import enrich_modes
 from kairos.core.heartbeat import heartbeat_service
 from kairos.db.clusters import list_clusters
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.embeddings.encoder import encode_query
 from kairos.models.schemas import ContextSnapshot, DeliveryMode, FeedbackAction, LocationType
 from kairos.observability.bus import event_bus
@@ -126,7 +126,7 @@ def get_relevant_bookmarks(query: str, limit: int = 5) -> list[dict[str, Any]]:
         try:
             return await search_bookmarks(query, limit=limit)
         finally:
-            await close_mongo()
+            await close_db()
 
     results = asyncio.run(_run())
     event_bus.emit(
@@ -175,7 +175,7 @@ def get_cluster_summary(topic: str) -> dict[str, Any] | None:
                 "member_count": cluster.get("member_count"),
             }
         finally:
-            await close_mongo()
+            await close_db()
 
     result = asyncio.run(_run())
     event_bus.emit("cluster", f"Lookup cluster for {topic!r}", topic=topic, found=bool(result))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kairos.db.metrics import _user_match
+from kairos.db.metrics import _user_where
 from kairos.models.sensors import (
     CalendarEvent,
     EmailThread,
@@ -32,8 +32,8 @@ def test_fuse_headspace_payload_empty_lists():
 
 
 def test_metrics_user_match_demo_gym_aggregate():
-    assert _user_match(None, include_sim=True) == {"sim": True}
+    assert _user_where(None, include_sim=True) == ("sim = 1", [])
 
 
 def test_metrics_user_match_scoped_user():
-    assert _user_match("user-123", include_sim=False) == {"user_id": "user-123"}
+    assert _user_where("user-123", include_sim=False) == ("user_id = ?", ["user-123"])

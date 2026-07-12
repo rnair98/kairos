@@ -10,8 +10,8 @@ gcloud run deploy kairos \
   --region us-central1 \
   --min-instances 1 \
   --memory 512Mi \
-  --set-env-vars "EMBEDDING_BACKEND=gemini,MONGODB_VECTOR_SEARCH_ENABLED=true" \
-  --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,MONGODB_URI=mongodb-uri:latest"
+  --set-env-vars "EMBEDDING_BACKEND=gemini,VECTOR_SEARCH_ENABLED=true" \
+  --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,TURSO_DATABASE_URL=turso-database-url:latest,TURSO_AUTH_TOKEN=turso-auth-token:latest"
 ```
 
 Required env vars:
@@ -19,20 +19,15 @@ Required env vars:
 | Variable | Purpose |
 |----------|---------|
 | `GEMINI_API_KEY` | LLM + embeddings |
-| `MONGODB_URI` | Atlas connection string |
+| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Hosted Turso primary — omit both for a purely local `kairos.db` file (fine for single-instance Cloud Run with a mounted volume; use a hosted primary for multi-instance) |
 | `KAIROS_USER_ID` | Active user after Google OAuth |
 | `EMBEDDING_BACKEND` | `gemini` (default in container) |
 
-## Atlas vector search
+## libSQL vector search
 
-On first `kairos bookmarks cluster`, Kairos attempts to create vector search indexes:
+Vector columns (`clusters.centroid_embedding`, `bookmarks.embedding`) are native libSQL `F32_BLOB` columns — no separate index-creation step, unlike Atlas. Dimensions must match `GEMINI_EMBEDDING_DIMENSIONS` (default 768). If the libSQL build lacks vector functions, ranking falls back to in-memory cosine similarity.
 
-- `clusters_centroid` on `clusters.centroid_embedding`
-- `bookmarks_embedding` on `bookmarks.embedding`
-
-Dimensions must match `GEMINI_EMBEDDING_DIMENSIONS` (default 768). If indexes cannot be created (local MongoDB), ranking falls back to in-memory cosine similarity.
-
-Disable vector search: `MONGODB_VECTOR_SEARCH_ENABLED=false`
+Disable vector search: `VECTOR_SEARCH_ENABLED=false`
 
 ## Local dev with offline embeddings
 

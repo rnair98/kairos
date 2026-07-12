@@ -23,7 +23,7 @@ from kairos.core.context import context_meta, get_context_async, is_demo_context
 from kairos.core.demo import DEFAULT_DEMO_OVERRIDE, reset_demo_headspace
 from kairos.core.headspace import enrich_modes
 from kairos.db.google_tokens import load_google_connection
-from kairos.db.mongo import close_mongo, set_mongo_persist
+from kairos.db.engine import close_db, set_db_persist
 from kairos.db.notifications import list_notifications
 from kairos.db.prep_jobs import create_prep_job, get_prep_job
 from kairos.google.headspace_sync import fuse_and_persist_headspace
@@ -42,11 +42,11 @@ log = get_logger("http")
 async def _lifespan(_app: FastAPI):
     setup_logging()
     get_logger("app").info("Kairos web app ready")
-    set_mongo_persist(True)
+    set_db_persist(True)
     yield
     get_logger("app").info("Kairos web app shutting down")
-    set_mongo_persist(False)
-    await close_mongo()
+    set_db_persist(False)
+    await close_db()
 
 
 app = FastAPI(title="Kairos", version="0.1.0", lifespan=_lifespan)

@@ -14,7 +14,7 @@ from kairos.db.bandit import ensure_bandit_indexes, get_bandit_params_batch
 from kairos.db.bookmarks import list_bookmarks_by_cluster
 from kairos.db.clusters import list_clusters
 from kairos.db.feedback import list_snoozed_cluster_ids
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.db.vector_search import (
     rank_clusters_in_memory,
     search_clusters_by_vector,
@@ -97,8 +97,8 @@ async def evaluate_surface(
 
     generate_digest=False skips the LLM call — used by the gym to avoid
     10–25s latency across thousands of ticks.
-    _keep_db_open=True skips close_mongo() — used by the gym to reuse the
-    Motor connection pool across the full run.
+    _keep_db_open=True skips close_db() — used by the gym to reuse the
+    database connection across the full run.
     """
     if context_override:
         snippet = context_override[:120] + ("…" if len(context_override) > 120 else "")
@@ -311,7 +311,7 @@ async def evaluate_surface(
         )
     finally:
         if not _keep_db_open:
-            await close_mongo()
+            await close_db()
 
     cluster_name = decision.digest.cluster_name if decision.digest else None
     event_bus.emit(

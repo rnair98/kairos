@@ -6,17 +6,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from kairos.db.bandit import bandit_user_id
-from kairos.db.mongo import get_database
-
-COLLECTION = "feedback_events"
+from kairos.db.engine import iso, run
 
 
-def _user_match(user_id: str | None, *, include_sim: bool = False) -> dict[str, Any]:
+def _user_where(user_id: str | None, *, include_sim: bool = False) -> tuple[str, list[Any]]:
     uid = bandit_user_id(user_id)
     if include_sim and uid == "__default__":
         # Demo gym aggregate — personas use sim:* user_ids
-        return {"sim": True}
-    return {"user_id": uid}
+        return "sim = 1", []
+    return "user_id = ?", [uid]
 
 
 async def get_engagement_by_day(
@@ -32,52 +30,40 @@ async def get_engagement_by_day(
     Each entry: {date: "YYYY-MM-DD", surfaces: int, engagements: int, rate: float}
     Ordered oldest → newest so the dashboard sparkline reads left-to-right.
     """
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    match_filter: dict[str, Any] = {"created_at": {"$gte": since}, **_user_match(user_id, include_sim=include_sim)}
+    since = iso(datetime.now(timezone.utc) - timedelta(days=days))
+    where, params = _user_where(user_id, include_sim=include_sim)
+    clauses = [f"created_at >= ?", where]
+    values: list[Any] = [since, *params]
     if not include_sim:
-        match_filter["sim"] = {"$ne": True}
+        clauses.append("sim != 1")
     if persona:
-        match_filter["persona"] = persona
+        clauses.append("persona = ?")
+        values.append(persona)
 
-    pipeline = [
-        {"$match": match_filter},
-        {
-            "$group": {
-                "_id": {
-                    "$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}
-                },
-                "surfaces": {"$sum": 1},
-                "engagements": {
-                    "$sum": {
-                        "$cond": [
-                            {"$gt": ["$derived_reward", 0]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
+    def _task(conn: Any) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            f"""
+            SELECT substr(created_at, 1, 10) AS date,
+                   COUNT(*) AS surfaces,
+                   SUM(CASE WHEN derived_reward > 0 THEN 1 ELSE 0 END) AS engagements
+            FROM feedback_events
+            WHERE {' AND '.join(clauses)}
+            GROUP BY date
+            ORDER BY date ASC
+            """,
+            tuple(values),
+        ).fetchall()
+        return [
+            {
+                "date": date,
+                "surfaces": int(surfaces),
+                "engagements": int(engagements or 0),
+                "rate": (engagements or 0) / surfaces if surfaces else 0.0,
             }
-        },
-        {"$sort": {"_id": 1}},
-        {
-            "$project": {
-                "_id": 0,
-                "date": "$_id",
-                "surfaces": 1,
-                "engagements": 1,
-                "rate": {
-                    "$cond": [
-                        {"$gt": ["$surfaces", 0]},
-                        {"$divide": ["$engagements", "$surfaces"]},
-                        0.0,
-                    ]
-                },
-            }
-        },
-    ]
+            for date, surfaces, engagements in rows
+        ]
 
-    cursor = get_database()[COLLECTION].aggregate(pipeline)
-    return await cursor.to_list(length=days + 5)
+    return await run(_task)
 
 
 async def get_overall_stats(
@@ -86,41 +72,31 @@ async def get_overall_stats(
     user_id: str | None = None,
 ) -> dict[str, Any]:
     """Return aggregate counts: total surfaces, engagements, overall rate."""
-    match_filter: dict[str, Any] = _user_match(user_id, include_sim=include_sim)
+    where, params = _user_where(user_id, include_sim=include_sim)
+    clauses = [where]
+    values: list[Any] = [*params]
     if not include_sim:
-        match_filter["sim"] = {"$ne": True}
+        clauses.append("sim != 1")
 
-    pipeline = [
-        {"$match": match_filter},
-        {
-            "$group": {
-                "_id": None,
-                "total_surfaces": {"$sum": 1},
-                "total_engagements": {
-                    "$sum": {
-                        "$cond": [
-                            {"$gt": ["$derived_reward", 0]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
-            }
-        },
-    ]
+    def _task(conn: Any) -> dict[str, Any]:
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*) AS total_surfaces,
+                   SUM(CASE WHEN derived_reward > 0 THEN 1 ELSE 0 END) AS total_engagements
+            FROM feedback_events
+            WHERE {' AND '.join(clauses)}
+            """,
+            tuple(values),
+        ).fetchone()
+        surfaces = int(row[0] or 0)
+        engagements = int(row[1] or 0)
+        return {
+            "total_surfaces": surfaces,
+            "total_engagements": engagements,
+            "overall_rate": engagements / surfaces if surfaces else 0.0,
+        }
 
-    results = await get_database()[COLLECTION].aggregate(pipeline).to_list(length=1)
-    if not results:
-        return {"total_surfaces": 0, "total_engagements": 0, "overall_rate": 0.0}
-
-    row = results[0]
-    surfaces = row.get("total_surfaces", 0)
-    engagements = row.get("total_engagements", 0)
-    return {
-        "total_surfaces": surfaces,
-        "total_engagements": engagements,
-        "overall_rate": engagements / surfaces if surfaces else 0.0,
-    }
+    return await run(_task)
 
 
 def rate_change_pct(by_day: list[dict[str, Any]]) -> float | None:

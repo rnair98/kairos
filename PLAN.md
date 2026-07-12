@@ -1,6 +1,6 @@
 # Kairos — Plan
 
-> **Status (2026-06):** P0–P2 simplification landed — see [docs/TECH_DEBT.md](docs/TECH_DEBT.md) for current state and P3 backlog. This doc retains the original product thesis and hackathon build order.
+> **Status (2026-06):** P0-P2 simplification landed — see [docs/TECH_DEBT.md](docs/TECH_DEBT.md) for current state and P3 backlog. This doc retains the product thesis and roadmap.
 
 > *kairos* (Greek): the right or opportune moment. The agent that turns a passive bookmark graveyard into execution by learning *when* to surface information, not just *what*.
 
@@ -8,15 +8,13 @@
 
 A context-aware agent that learns the optimal moment to surface Twitter/X bookmarks based on calendar state, location, time patterns, and headspace signals — with zero friction feedback and a nightly self-improvement pass. Passive hoarding → timely execution.
 
-**Hackathon theme:** Continual Learning (primary) + Self-Improvement Stack (secondary)
-
 **The thesis in one sentence:** Everyone embeds the bookmark; nobody optimizes the interruption policy against measured attention outcomes and lets it rewrite itself.
 
 ---
 
 ## Core Insight: This Is Not a Search Problem
 
-The median hackathon project embeds bookmarks, does cosine similarity, sends a push notification. That's a cron job with a vector index. It fails because:
+The naive version embeds bookmarks, does cosine similarity, and sends a push notification. That's a cron job with a vector index. It fails because:
 - It fires at wrong moments and gets ignored
 - It never learns from that ignoring
 - Silence is never a feature
@@ -32,7 +30,7 @@ Kairos is a **contextual bandit**: at each candidate moment, score bookmark clus
 │                        INGEST LAYER                         │
 │  X API GET /2/users/{id}/bookmarks (paginated sync)         │
 │  → normalize → LLM enrichment (Gemini flash-lite)           │
-│  → MongoDB + embeddings → HDBSCAN clustering                │
+│  → Turso/libSQL + embeddings → HDBSCAN clustering            │
 │  (fallback: X data export for bootstrap without OAuth)      │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -140,7 +138,7 @@ Topical affinity → which cluster to surface. Attention capacity → whether an
 
 ## Data Models
 
-All models in `src/kairos/models/schemas.py`. MongoDB collections:
+All models in `src/kairos/models/schemas.py`. Database tables (Turso/libSQL):
 
 ### `bookmarks`
 
@@ -250,13 +248,13 @@ All models in `src/kairos/models/schemas.py`. MongoDB collections:
 
 ### Step 1 — Feasibility Filter
 
-MongoDB pre-filter before vector search:
+SQL pre-filter before vector search:
 ```python
 { "energy_cost": { "$lte": available_capacity },
   "cluster_id": { "$nin": snoozed_cluster_ids } }
 ```
 
-### Step 2 — Topical Score (Atlas `$vectorSearch`)
+### Step 2 — Topical Score (libSQL `vector_distance_cos`)
 
 ```python
 pipeline = [
@@ -320,11 +318,15 @@ feedback_event.derived_reward
         │    Also updates bandit_treatments for digest_style (GAMBITTS-lite)
         │    Wired: core/feedback.py → db/bandit.apply_*_reward()
         │
-        └──► GEPA OPTIMIZATION (offline, manual or nightly)        ✅ SHIPPED
+        └──► GEPA OPTIMIZATION (offline, manual or nightly)        ⚠️ SHIPPED, UNGATED
              Trigger: kairos optimize run | kairos optimize nightly | POST /api/optimize
              Input: rendered notification_text + derived_reward
              Updates: digest generation prompt in llm/generation.py
              Artifact: optimization_runs doc → admin GEPA diff panel
+             Known defect: the lift is synthetic (engagement_before × 1.12 when the
+             prompt changed) and any changed prompt auto-activates via the
+             engagement_delta > 0 gate — true by construction. R4a replaces this
+             with measured gepa.optimize + treatment-arm deployment.
 ```
 
 The two loops optimize different things: the **bandit** learns *when* to surface (timing policy, online); **GEPA** learns *how* the digest is phrased (language, offline). Neither touches model weights — honest scope is policy RSI + prompt RSI at the application layer.
@@ -340,13 +342,13 @@ The two loops optimize different things: the **bandit** learns *when* to surface
 | **Policy** | `should_surface`, `gate_reasons`, `adjusted_score`, bandit `α/β`, `context_class`, `derived_reward` | No OTEL vocab exists | `feedback_events`, `bandit_params`, `bandit_treatments`, EventBus |
 | **LLM / agent** | enrichment, digest gen, harness tool calls — prompt labels, inputs/outputs when `GEMINI_LOG_IO` is enabled | Yes (OpenInference / OTEL GenAI) | `pipeline_events`, optional Gemini I/O log |
 
-Current build uses **EventBus + persisted `pipeline_events`** for the demo trace, and `feedback_events.notification_text` as the GEPA training artifact. A future `decision_id` / OpenInference trace plane remains useful if we want per-token cost, prompt versioning, and exact prompt→output→reward joins, but it is no longer required for the hackathon demo.
+Current build uses **EventBus + persisted `pipeline_events`** for the demo trace, and `feedback_events.notification_text` as the GEPA training artifact. A future `decision_id` / OpenInference trace plane remains useful if we want per-token cost, prompt versioning, and exact prompt→output→reward joins.
 
 ---
 
 ## Persona Gym (`sim/`)
 
-Simulated software-engineer lifestyles drive the real policy loop — Act 3 of the demo and the convergence data the dashboard shows.
+Simulated software-engineer lifestyles drive the real policy loop and the convergence data the dashboard shows.
 
 | Module | Role |
 |--------|------|
@@ -357,7 +359,7 @@ Simulated software-engineer lifestyles drive the real policy loop — Act 3 of t
 
 CLI: `kairos sim run --days 14 --personas alex,maya,jordan` · `kairos sim reset`. The gym calls `evaluate_surface(..., generate_digest=False)` so it skips the ~10–25s Gemini digest call across thousands of ticks (personas react to cluster topic + context, not prose). Gym writes sim-tagged events to live collections, so `/api/metrics` shows real convergence; `sim reset` clears sim docs for a clean live Act 2.
 
-**Demo arc:** Act 1 graveyard (corpus) → Act 2 live single-user feedback (dismiss → β update) → Act 3 gym. Full runbook: `docs/demo-readiness/DEMO.md`.
+**Demo arc:** corpus prep -> live single-user feedback (dismiss -> beta update) -> persona gym convergence.
 
 ---
 
@@ -368,8 +370,8 @@ CLI: `kairos sim run --days 14 --personas alex,maya,jordan` · `kairos sim reset
 | Continual Learning thesis | 9/10 | ✅ Bandit + feedback loop + snooze label | Learning curve exists; annotate the “dismiss → β update” beat more explicitly |
 | Self-Improvement Stack | 7/10 | ✅ GEPA shipped end-to-end | Admin GEPA panel skips silently when feedback < threshold; no readiness count shown |
 | Differentiation from median | 8/10 | ✅ GAMBITTS-lite + cohort priors | Treatment-lift panel not in UI; cohort-prior activation not surfaced |
-| Demo-readiness | 6/10 | ✅ Runbook exists | Gym and at least one GEPA diff must be pre-seeded before demo |
-| Judge "wow" moment | 6/10 | ✅ Bandit α/β panel + GEPA diff | No single visual that shows the policy learned something; trend data exists but isn't annotated |
+| Demo flow | 6/10 | ✅ Browser path exists | Gym and at least one GEPA diff should be pre-seeded before demo |
+| Learning visibility | 6/10 | ✅ Bandit alpha/beta panel + GEPA diff | No single visual that shows the policy learned something; trend data exists but isn't annotated |
 
 **Target: 10/10 all dimensions.** See [Finish Line Sprint](#finish-line-sprint-1010-checklist) below.
 
@@ -380,10 +382,6 @@ CLI: `kairos sim run --days 14 --personas alex,maya,jordan` · `kairos sim reset
 | Self-improvement stack | ✅ Proven | EventBus/SSE, persisted `pipeline_events`, `/api/metrics`, sim gym |
 | Prompt self-improvement | ✅ Partial | `kairos optimize run/nightly`, `/api/optimize`; readiness indicator pending |
 | Exact LLM trace join | 🚧 Future | `decision_id` / OpenInference-style trace plane |
-
-The active runbook is [docs/demo-readiness/DEMO.md](docs/demo-readiness/DEMO.md). Historical phase reviews live under [docs/archive/hackathon/](docs/archive/hackathon/).
-
----
 
 ## Research-Driven Roadmap (R1–R6 + R4a)
 
@@ -397,7 +395,8 @@ Force-multiplier upgrades distilled from two independent research passes (this r
 | **R2** | Linear Thompson Sampling | LinUCB (Li 2010 — news timing); Linear TS (Agrawal–Goyal 2013) | Discrete `context_class` buckets fragment sparse feedback; similar moments share zero signal | `core/bandit.py`, `db/bandit.py`, `core/moment.py`, `core/ranking.py` | Active |
 | **R3** | Sleep-time-lite | Sleep-time Compute (Lin 2025); Letta dual-agent | Live SURFACE path is 20–40s (moment-fit + grounding + digest) | `core/sleep_cache.py`, `core/context.py`, `core/ranking.py` | Active |
 | **R4** | GEPA + trace join | GEPA (Agrawal 2026); Letta Context Repositories | ✅ Prompt diff loop shipped; remaining trace join would make prompt→output→reward exact | `core/optimize.py`, `db/optimization_runs.py`, future trace table | Partial |
-| **R4a** | BAML typed LLM boundary | BoundaryML BAML typed prompt programs | Structured Gemini calls have brittle schema glue; prompt-program versions are not first-class trace fields | `llm/generation.py`, `llm/compose.py`, `models/schemas.py`, future `llm_traces` | Active |
+| **R4a** | Real GEPA — standalone `gepa` library | GEPA (Agrawal et al., ICLR 2026 oral); `gepa-ai/gepa` | Shipped loop fabricates its lift (`engagement_before × 1.12`) and auto-activates any changed prompt; no measured optimization exists | `core/optimize.py`, `core/eval_harness.py`, `db/optimization_runs.py`, `sim/persona.py` | Active |
+| **R4b** | Exa grounding adapter | Exa API | Web grounding coupled to Gemini `google_search`; no provider abstraction, citations, or cost metadata | `llm/generation.py` (`_ground_digest_with_search`), new `GroundingProvider` | Queued (post-R2) |
 | **R5** | PRISM — calibrated speak-vs-silent | PRISM (2026); selective prediction / calibrated abstention | Binary `moment_fit` threshold is uncalibrated; abstention is the thesis but isn't principled | `core/ranking.py` gate layer, `core/intelligence.py` | Active (promoted) |
 | **R6** | Latent-receptivity POMDP / LTV | O'Brien 2022 (Meta); Steyvers–Mayer 2025; restless bandits | Myopic bandit optimizes this tick; the real failure is 7-day disengagement. Hand-tuned `daily_surface_budget` + `min_gap` are a crude approximation of the optimal long-horizon policy | `core/ltv.py` (new), `core/ranking.py` gates, `sim/feedback_model.py` | Active (promoted) |
 
@@ -409,7 +408,7 @@ Force-multiplier upgrades distilled from two independent research passes (this r
 |------|-------------------|------------------|-------------------|
 | Live heartbeat | p50/p95 by span: context, query embedding, vector rank, bandit fetch, moment-fit, digest, Exa grounding, DB writes | Sleep cache; async Exa; digest cache; fewer sequential LLM calls | CPU-only Python span is >25% of p95 after network/LLM/DB time is excluded |
 | Local vector fallback | cluster/bookmark count, vector dimension, cosine rank wall/CPU time | NumPy matrix cosine; libSQL/Turso vector search | NumPy/SQL still misses target at >50k local vectors |
-| Prep pipeline | per-stage timings: link fetch, Exa, Gemini/BAML, embedding, HDBSCAN, writes | bounded concurrency; content hash cache; bulk writes; avoid full recluster | CPU-bound parsing/vector math dominates after I/O is cached |
+| Prep pipeline | per-stage timings: link fetch, Exa, Gemini, embedding, HDBSCAN, writes | bounded concurrency; content hash cache; bulk writes; avoid full recluster | CPU-bound parsing/vector math dominates after I/O is cached |
 | Trace/event processing | events/sec, payload bytes, write latency | batch persistence; TTL; compact JSON payloads | serialization/compression is a proven hot path |
 
 Decision rule: do not introduce a Rust module unless the trace shows a repeatable CPU-bound hotspot, a Python/native alternative has been tried or ruled out, and the candidate module has a narrow boundary (`vector_rank`, `url_normalize`, `trace_codec`, or feature-vector construction). If the slow span is LLM, Exa, embeddings API, database I/O, or scheduler latency, fix orchestration/cache/provider behavior in Python instead.
@@ -439,18 +438,69 @@ Pre-materialize the expensive intelligence while idle so heartbeats stay fast. *
 
 ### R4 — GEPA + trace join (Recursive-Intelligence coverage)
 
-The offline prompt-RSI loop (see [Two Self-Improvement Loops](#two-self-improvement-loops)). `core/optimize.py` runs a reflective pass over the digest prompt, scored on recent `feedback_events`, emitting a real prompt diff into `optimization_runs` and the admin GEPA panel. `kairos optimize nightly` is cron-safe and skips when feedback is insufficient. The remaining research-grade upgrade is an exact trace join: prompt version + model input + model output + reward for every decision.
+The offline prompt-RSI loop (see [Two Self-Improvement Loops](#two-self-improvement-loops)). `core/optimize.py` runs a reflective pass over the digest prompt, emitting a real prompt diff into `optimization_runs` and the admin GEPA panel — but its lift number is synthetic and its activation gate is vacuous; **R4a replaces the loop's optimizer and deployment path**, after which R4's remaining research-grade upgrade is the exact trace join: prompt version + model input + model output + reward for every decision. `kairos optimize nightly` stays cron-safe and skips when feedback is insufficient.
 
-### R4a — BAML typed LLM boundary (make prompt programs testable before optimizing them)
+### R4a — Real GEPA via the standalone `gepa` library (replace the hand-rolled loop with a measured optimizer)
 
-BAML belongs at Kairos's **LLM boundary**, not inside the deterministic policy. Keep Gemini Interactions API as the synthesis/runtime foundation, move web retrieval to an Exa-only grounding adapter, and keep ranking, hard gates, and bandit updates outside BAML. Use BAML where the value is highest: typed structured outputs, prompt-program tests, and traceable function/version names.
+**What changed and why.** The previous R4a proposed a BAML migration of the LLM boundary. That is demoted to the deferred table: the boundary already works — Gemini constrained decoding + Pydantic + the `$ref` inliner shipped 2026-07 — and BAML's headline features (schema-aligned parsing of malformed output, multi-language codegen) solve problems Kairos doesn't have. The real defect at the LLM layer is in the *optimization* loop, not the boundary: `core/optimize.py` fabricates its measured lift (`engagement_after = engagement_before × 1.12` whenever the prompt changed) and `db/optimization_runs.get_active_prompt()` activates any run with `engagement_delta > 0` — a gate that is true by construction. The shipped loop is prompt hot-swapping with an invented success number. R4a replaces it with the real optimizer the loop was named after.
 
-- **First target:** `digest-core` and `digest-critique` in `llm/generation.py`. This is the most brittle code today because nested Pydantic schemas require custom `$ref` inlining before Gemini accepts them. BAML should own the typed digest/critique functions and fixture tests.
-- **Second target:** `enrich_bookmark`. It is high-volume, structured, and easy to regression-test against saved bookmark examples.
-- **Later target:** `moment-fit` and headspace enrichment only after fixture tests prove conservative behavior. These calls affect interruption decisions, so false positives are more expensive than parse failures.
-- **Trace contract:** persist BAML function name, prompt/program version, input hash, output schema, latency, model, and reward join key into the future `llm_traces` table. This gives GEPA/DSPy exact prompt-program provenance instead of inferring from rendered notification text.
-- **Grounding adapter:** replace direct Gemini `google_search` calls with `GroundingProvider` backed only by Exa. Demos should run with Exa grounding enabled; `none` is reserved for offline/CI runs where network or API keys are unavailable. Exa supplies search results, page contents, published dates, highlights, citations, request IDs, and cost metadata; Gemini/BAML synthesize those retrieved facts into `web_context`.
-- **Non-goals:** do not migrate web retrieval, `HeartbeatService`, ranking, PRISM gates, or bandit learning into BAML. BAML hardens the language-model interface; it does not become the policy engine or the search provider.
+**Tool choice — standalone `gepa`, not full DSPy, not BAML (validated against the field 2026-07):**
+
+- GEPA (Agrawal et al., ICLR 2026 oral) outperforms MIPROv2 by ~10–13% and GRPO-style RL by up to 20% with ~35× fewer rollouts, and is the core algorithm inside Comet's Opik Agent Optimizer — the field converged on reflective prompt evolution.
+- It ships standalone (`pip install gepa`): `gepa.optimize(seed_candidate={...})` takes a plain dict of prompt strings plus an adapter. **No DSPy module rewrite; the Gemini/Pydantic serving path is untouched.** Full DSPy adoption (`dspy.Module` at runtime) is explicitly a non-goal — DSPy earns its keep when the whole pipeline is compiled; ours is one prompt behind `prompt_override`.
+- Alternatives rejected: **MIPROv2** — jointly optimizes few-shot demo slots we don't use, and is outperformed by GEPA on instruction-only tasks; **TextGrad** — strong on uniform-difficulty tasks, but our eval set is heterogeneous persona × context pairs, exactly where GEPA's Pareto-frontier candidate selection wins; **promptim / LangSmith** — LangChain-native, wrong stack; **Opik Agent Optimizer** — wraps GEPA, adds a platform dependency for no algorithmic gain.
+
+**The metric prerequisite (the honest hard part).** GEPA needs a metric that varies with prompt wording, and neither existing evaluator qualifies: `sim/feedback_model.simulate_feedback` maps persona × cluster × context → action *without ever reading digest text* (zero gradient on wording), and `core/eval_harness.run_fixture_eval` reads the text but only checks structure (3 fixtures, length thresholds). Step one is upgrading the harness into a judge:
+
+1. Expand `FIXTURES` to ~20–30 persona × context × cluster triples, reusing `sim/persona.py` personas (train/held-out split).
+2. Add `judge_digest(fixture, digest)` — an LLM-judge rubric scoring persona-fit (would *this* persona at *this* moment engage?), restraint compliance (no curiosity-gap framing, no overpromising `why_now`; the anti-clickbait check the reward table alone can't enforce), with the structural checks kept as hard fails. It returns `{score, feedback}` — the textual feedback is what GEPA reflects on, and is the API's whole advantage over scalar-reward optimizers.
+
+**Sketch** (~150 lines, mostly adapter code):
+
+```python
+import gepa
+from kairos.core.eval_harness import judge_digest, load_fixture_split  # new
+from kairos.llm.generation import _DEFAULT_DIGEST_PROMPT, generate_cluster_digest
+
+class KairosGymAdapter(gepa.GEPAAdapter):
+    def evaluate(self, batch, candidate, capture_traces=False):
+        digests = [
+            generate_cluster_digest(
+                cluster_id=f"gepa-{fx.name}",
+                cluster_name=fx.cluster_name,
+                cluster_summary=fx.cluster_summary,
+                bookmark_snippets=fx.snippets,
+                context=fx.context,
+                member_count=len(fx.snippets),
+                prompt_override=candidate["digest_prompt"],
+            )
+            for fx in batch
+        ]
+        # judge returns score ∈ [0,1] + feedback text, e.g.
+        # "persona=snoozer, ctx=8min gap: why_now promises a deep read — mismatch"
+        return [judge_digest(fx, d) for fx, d in zip(batch, digests)]
+
+    def make_reflective_dataset(self, candidate, eval_batch, components):
+        ...  # judge feedback strings grouped per component
+
+train_fx, heldout_fx = load_fixture_split()
+result = gepa.optimize(
+    seed_candidate={"digest_prompt": _DEFAULT_DIGEST_PROMPT},
+    trainset=train_fx,
+    valset=heldout_fx,
+    adapter=KairosGymAdapter(),
+    reflection_lm="gemini/gemini-2.5-pro",  # reflection deserves the big model
+    max_metric_calls=150,                   # ≈ fixtures × ~6 candidate evals
+)
+```
+
+**Deployment — through the treatment bandit, not a hot swap.** Delete the ×1.12 estimate and the `engagement_delta > 0` activation path. The winning `result.best_candidate["digest_prompt"]` is registered as a treatment arm `digest_style="gepa_v{n}"` in `bandit_treatments` (R1 infrastructure, already shipped); live traffic splits between incumbent and candidate, and `apply_treatment_reward` promotes on real posterior separation. `optimization_runs` stores the prompt diff plus the judge's held-out score labelled *offline/simulated* — never a claimed live engagement delta. This makes the two-loop story literally true: **GEPA proposes on simulated users; the treatment bandit disposes on real ones.**
+
+**Named caveat.** Optimizing against the judge means GEPA learns to please the judge — the same circularity trap named in R6. That is why activation authority lives with the live treatment bandit, and why the judge rubric encodes restraint, so "pleasing the judge" at least points at the thesis rather than at engagement bait.
+
+### R4b — Exa grounding adapter (decoupled from optimizer work)
+
+The grounding swap from the old R4a, now its own line so a retrieval-provider migration is never coupled to the learning loop: replace direct Gemini `google_search` calls (`_ground_digest_with_search`) with a `GroundingProvider` backed by Exa. Demos run with Exa grounding enabled; `none` is reserved for offline/CI runs. Exa supplies search results, page contents, published dates, highlights, citations, request IDs, and cost metadata; Gemini synthesizes those retrieved facts into `web_context`. **Sequenced after R5/R2:** it replaces a working, demoed path and carries integration risk with zero learning-loop payoff, so it does not belong in front of thesis-critical work.
 
 ### R5 — PRISM, calibrated speak-vs-silent (promoted — silence is the thesis, so make it principled)
 
@@ -478,10 +528,11 @@ These stay out of the active roadmap, but **not** for effort reasons. Each has a
 | **TIM intra-day scheduling** | Kuaishou 2024 | **Objective mismatch with the thesis.** TIM's loss maximizes aggregate slot-wise CTR given a notification budget — it is trained to *fill slots well*. Kairos's objective rewards correct *abstention*. Adopting it reintroduces a throughput-maximizing allocator that fights restraint. Not a future "do later" — a "do not, by design," unless the product thesis changes. |
 | **Delayed-feedback bandit (Bootstrap TS)** | UAI 2024 | **Throughput regime suppresses the pathology — conditionally.** By Little's law, in-flight uncensored rewards ≈ arrival-rate × mean-delay. Live: ~3 surfaces/day (0.125/hr) × minutes-to-hours delay ⇒ ≈0.1 expected premature updates — the noise Bootstrap-TS fixes barely exists *because the restraint budget keeps throughput tiny*. **Caveat:** the gym runs at compressed high throughput, so if gym pretraining models realistic delay (it currently applies reward synchronously), Bootstrap-TS *would* matter there. Build it iff the gym is upgraded to model delay; skip for the live path on throughput grounds. |
 | **Recharging / restless bandits for habituation** | — | Partially **subsumed** by R6. Habituation (engagement decaying under repeated exposure) is a special case of the latent-receptivity state R6 models. Build standalone only if R6's POMDP proves too heavy and a lighter restless-bandit approximation is wanted. |
+| **BAML typed LLM boundary** | BoundaryML BAML | **Solves a problem the boundary no longer has.** BAML's value is schema-aligned parsing of malformed LLM output, multi-language codegen, and day-1 support for models without native structured output. Kairos gets valid JSON from Gemini constrained decoding, the `$ref` inliner (shipped 2026-07) removed the schema brittleness that motivated the migration, and there is exactly one consumer language. A `.baml` DSL + codegen step is a lateral replatform of a working path — pure integration risk, no capability gain. Revisit iff Kairos goes multi-provider/multi-language or drops constrained decoding. |
 
 Full survey + citations: `docs/archive/research/CURSOR.md`.
 
-**Active build order:** R4a (BAML digest boundary — removes structured-output brittleness and creates clean prompt-program versions) → R5 (calibrated gate — small, thesis-critical) → R2 (linear bandit) → DR-OPE substrate → R6 (POMDP + honest gym) → R3 (sleep cache) → R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D.
+**Active roadmap sequence:** R4a (real GEPA — deletes the fabricated-lift gate; judge harness first, then `gepa.optimize`; offline only, serving path untouched) -> R5 (calibrated gate — small, thesis-critical) -> R2 (linear bandit) -> DR-OPE substrate -> R6 (POMDP + honest gym) -> R3 (sleep cache) -> R4b (Exa grounding) -> R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D — and it is also R4a's deployment channel, so Sprint D doubles as GEPA's activation UI.
 
 ---
 
@@ -585,14 +636,14 @@ Custom scheduler eliminated. Three Claude Code mechanisms replace it:
 
 | Component | Tool | Status |
 |-----------|------|--------|
-| Persistence | MongoDB Atlas | done |
-| Vector search | Atlas `$vectorSearch` with in-memory fallback | done |
+| Persistence | Turso/libSQL — local `kairos.db` file, optional hosted-primary sync | done |
+| Vector search | libSQL native `vector_distance_cos` with in-memory fallback | done |
 | Embeddings | Gemini default; local BGE optional | done |
 | Clustering | HDBSCAN + stable centroid reuse | done |
 | Bandit | Thompson sampling α/β + cohort prior + treatment posterior | done |
-| Prompt optimization | Hand-rolled GEPA-style reflection + fixture eval | done |
-| LLM boundary hardening | BAML for typed digest/critique first; enrichment second | planned |
-| Web grounding | Exa-only `GroundingProvider`; enabled for demos; `none` only for offline/CI | planned |
+| Prompt optimization | Hand-rolled reflection loop (ungated) → standalone `gepa` library + LLM-judge harness, treatment-arm deployment (R4a) | replace |
+| LLM boundary | Gemini constrained decoding + Pydantic + `$ref` inliner (BAML evaluated and deferred — see roadmap) | done |
+| Web grounding | Exa-only `GroundingProvider`; enabled for demos; `none` only for offline/CI (R4b) | planned |
 | LLM — enrichment | Gemini flash-lite via `google-genai` Interactions API | done |
 | LLM — digest generation | Gemini flash via `google-genai` Interactions API | done |
 | Agent harness | Antigravity SDK (`google-antigravity`) | done |
@@ -622,8 +673,8 @@ X API bookmark endpoint: OAuth2 user-context, rate-limited, pricing volatile. St
 ## Demo Strategy — No Real Feedback in 48h
 
 1. Seed **synthetic persona** with scripted preferences
-2. Simulate 2 weeks of `feedback_events` to populate MongoDB
-3. Show engagement-rate curve climbing (MongoDB aggregation → Chart.js)
+2. Simulate 2 weeks of `feedback_events` to populate the database
+3. Show engagement-rate curve climbing (SQL aggregation → Chart.js)
 4. **One live adaptation on stage**: wrong-context surface → dismiss → bandit update → better surface
 
 Be explicit: real learning takes weeks; the simulator compresses it to 3 minutes.
@@ -633,7 +684,7 @@ Be explicit: real learning takes weeks; the simulator compresses it to 3 minutes
 ## What's Done vs. Next
 
 ### Shipped
-- MongoDB repositories for bookmarks, clusters, notifications, feedback, bandit params, treatment params, context cache, Google tokens, prep jobs, pipeline events, and optimization runs.
+- Turso/libSQL repositories for bookmarks, clusters, notifications, feedback, bandit params, treatment params, context cache, Google tokens, prep jobs, pipeline events, and optimization runs.
 - X OAuth + incremental bookmark sync; `kairos bookmarks prep` for enrich → research → embed → cluster.
 - Fixed embedding space with Gemini default and local BGE optional; HDBSCAN clustering with centroid reuse.
 - Policy core: headspace preparation, vector ranking, Thompson sampling, hard gates, snooze filtering, digest generation, and `KAIROS_OK` as a first-class outcome.
@@ -643,18 +694,18 @@ Be explicit: real learning takes weeks; the simulator compresses it to 3 minutes
 - MCP + ADK paths: direct policy tools via Kairos MCP; optional ADK `--via-agent` path for Workspace MCP sensor fusion.
 - Self-improvement: persona gym, `/api/metrics`, `kairos optimize run|readiness|eval|nightly`, `/api/optimize`, and `optimization_runs`.
 
-### Remaining before judges
+### Remaining polish
 See [Finish Line Sprint](#finish-line-sprint-1010-checklist) for implementation details.
 
 1. **Seed gym + research:** `kairos sim run --days 7` → populates sparkline + GEPA feedback pool. `just demo-corpus` (≥ 20 bookmarks) → populates researched link cards.
 2. **Build trend annotation + snooze callout** (Continual Learning → 10): sparkline slope + `rate_change_pct` badge; SSE snooze event with timing-label semantics.
 3. **Build treatment-lift mini-panel** (Differentiation → 10): compact table in Admin showing `p_engage` by `digest_style` from `bandit_treatments`.
 4. **Build GEPA readiness indicator** (Self-Improvement → 10): show feedback count + min-required in GEPA panel before any run; load via `GET /api/optimize/readiness`.
-5. **Wire gym seed into demo-serve** (Demo-readiness → 10): `just demo-serve` auto-runs `just demo-seed-gym` when `feedback_events` collection is empty.
+5. **Wire gym seed into demo-serve** (Demo flow -> 10): `just demo-serve` auto-runs `just demo-seed-gym` when `feedback_events` collection is empty.
 
 ### Beyond the research roadmap
 
-The policy/intelligence research work is now tracked as active R-lines (R2–R6 plus R4a) in the [Research-Driven Roadmap](#research-driven-roadmap-r1r6--r4a) — it is no longer "post-hackathon," since effort is not a constraint here. What genuinely sits outside that roadmap, gated by **external dependencies** rather than effort:
+The policy/intelligence research work is tracked as active R-lines (R2-R6 plus R4a) in the [Research-Driven Roadmap](#research-driven-roadmap-r1r6--r4a). What sits outside that roadmap, gated by **external dependencies** rather than effort:
 
 - **More ingest sources** (Readwise, Pocket, browser export) — each needs a separate third-party API/account integration; real external dependency, not internal work.
 - **Live longitudinal validation** of R6's POMDP and the delayed-feedback path — requires real users over real days; the gym can pressure-test the mechanism but cannot substitute for longitudinal ground truth (see the circular-validation note under R6).
@@ -675,7 +726,7 @@ Five contained additions that close each gap. Ordered by dependency — E first 
 
 ---
 
-### E — Auto-seed gym in demo-serve + research floor → Demo-readiness 10/10
+### E — Auto-seed gym in demo-serve + research floor -> Demo flow 10/10
 
 **What:**
 1. In `Justfile`, update `demo-prep` to check whether `feedback_events` has sim events; if empty, run the gym automatically. Gate behind `SKIP_GYM` (already the convention):
@@ -782,12 +833,15 @@ Total: ~105 min of implementation. All contained; no schema changes; no new coll
 ## References
 
 - GEPA (Agrawal et al., ICLR 2026 oral): https://arxiv.org/abs/2507.19457
-- GEPA in DSPy: https://dspy.ai/api/optimizers/GEPA/overview/
-- GEPA library: https://github.com/gepa-ai/gepa
-- BAML / BoundaryML: https://github.com/BoundaryML/baml
+- GEPA standalone library (`pip install gepa`, adapter + `optimize_anything` APIs): https://github.com/gepa-ai/gepa
+- GEPA in DSPy (reference for metric-with-feedback signature): https://dspy.ai/api/optimizers/GEPA/overview/
+- GEPA in production, test-driven approach (Decagon): https://decagon.ai/blog/optimizing-gepa-for-production
+- MIPROv2 (Opsahl-Ong et al., 2024 — rejected alternative): https://arxiv.org/abs/2406.11695
+- TextGrad (Yuksekgonul et al., 2024 — rejected alternative): https://arxiv.org/abs/2406.07496
+- BAML / BoundaryML (evaluated, deferred): https://github.com/BoundaryML/baml
 - Exa API docs: https://exa.ai/docs/llms.txt
 - Contextual bandits / LinUCB (Li et al., WWW 2010): https://arxiv.org/abs/1003.0146
 - Letta sleep-time compute (prior art): https://www.letta.com/blog/sleep-time-compute/
-- MongoDB Atlas Vector Search: https://www.mongodb.com/docs/atlas/atlas-vector-search/
+- Turso / libSQL AI & embeddings (native vector search): https://docs.turso.tech/features/ai-and-embeddings
 - Google Workspace MCP: https://developers.google.com/workspace/guides/configure-mcp-servers
 - Claude Code scheduled tasks: https://code.claude.com/docs/en/scheduled-tasks

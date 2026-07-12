@@ -1,5 +1,4 @@
 # Kairos task runner — https://github.com/casey/just
-# Demo runbook: docs/demo-readiness/DEMO.md
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
@@ -102,7 +101,7 @@ demo-prep:
       if just demo-seed-gym 7 demo 2>/dev/null; then
         echo "  ✓ gym seeded"
       else
-        echo "  ⚠ gym skipped (needs MongoDB + clusters)"
+        echo "  ⚠ gym skipped (needs the database + clusters)"
       fi
       echo ""
     fi
@@ -122,7 +121,6 @@ demo-prep:
       echo ""
     fi
     echo "▸ Ready: just demo-serve  |  just demo-surface"
-    echo "  Docs: docs/demo-readiness/DEMO.md"
 
 # Enrich + research + embed + cluster (single pipeline)
 demo-corpus:
@@ -255,9 +253,9 @@ demo-surface override="":
 demo-heartbeat override="":
     @just demo-surface override='{{override}}'
 
-# Print demo help + runbook pointer
+# Print demo help
 demo-help:
-    @echo "Kairos demo — docs/demo-readiness/DEMO.md"
+    @echo "Kairos demo"
     @echo ""
     @echo "  just demo-serve         prep + surface + dashboard (start here)"
     @echo "  just demo               alias for demo-serve"

@@ -109,7 +109,7 @@ class BookmarkResearch(BaseModel):
 
 
 class BookmarkDocument(BaseModel):
-    """Bookmark document stored in MongoDB (X API + optional enrichment)."""
+    """Bookmark document stored in the database (X API + optional enrichment)."""
 
     id: str | None = Field(default=None, alias="_id")
     x_tweet_id: str

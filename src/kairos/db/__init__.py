@@ -1,5 +1,5 @@
-"""MongoDB access layer."""
+"""libSQL (Turso) access layer."""
 
-from kairos.db.mongo import close_mongo, get_database, get_mongo_client, set_mongo_persist
+from kairos.db.engine import close_db, set_db_persist
 
-__all__ = ["close_mongo", "get_database", "get_mongo_client", "set_mongo_persist"]
+__all__ = ["close_db", "set_db_persist"]

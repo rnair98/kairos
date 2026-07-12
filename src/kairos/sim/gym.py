@@ -14,17 +14,19 @@ from kairos.core.ranking import evaluate_surface
 from kairos.core.rewards import reward_for_action
 from kairos.db.bandit import apply_bandit_reward, ensure_bandit_indexes, list_bandit_params
 from kairos.db.clusters import list_clusters
-from kairos.db.feedback import ensure_feedback_indexes
-from kairos.db.mongo import close_mongo, get_database
+from kairos.db.feedback import (
+    delete_sim_feedback,
+    ensure_feedback_indexes,
+    insert_sim_feedback_event,
+)
+from kairos.db.bandit import reset_bandit_params
+from kairos.db.engine import close_db
 from kairos.models.schemas import FeedbackAction
 from kairos.sim.context_sampler import TICKS_PER_DAY, _tick_hour, _daily_busy_ticks, sample_context
 from kairos.sim.feedback_model import simulate_feedback
 from kairos.sim.persona import ALL_PERSONAS, Persona
 
 logger = logging.getLogger(__name__)
-
-FEEDBACK_COLLECTION = "feedback_events"
-BANDIT_COLLECTION = "bandit_params"
 
 
 @dataclass
@@ -65,7 +67,6 @@ async def _insert_sim_feedback(
     derived_reward: float | None,
 ) -> None:
     """Write a sim-tagged feedback event without needing a real notification lookup."""
-    db = get_database()
     doc = {
         "event_id": str(uuid4()),
         "notification_id": f"sim_{uuid4().hex[:12]}",
@@ -82,7 +83,7 @@ async def _insert_sim_feedback(
         "persona": persona_name,
         "created_at": datetime.now(timezone.utc),
     }
-    await db[FEEDBACK_COLLECTION].insert_one(doc)
+    await insert_sim_feedback_event(doc)
 
 
 async def run_gym(
@@ -208,7 +209,7 @@ async def run_gym(
             sum(day_rates) / len(day_rates) if day_rates else 0,
         )
 
-    await close_mongo()
+    await close_db()
 
     logger.info(
         "Gym complete: run_id=%s surfaces=%d engagements=%d rate=%.2f errors=%d",
@@ -225,19 +226,13 @@ async def reset_gym(run_id: str | None = None) -> dict:
     If run_id is given, only deletes events from that run.
     Bandit params are always fully reset (they don't carry run_id).
     """
-    db = get_database()
+    deleted_feedback = await delete_sim_feedback(run_id)
+    deleted_bandit = await reset_bandit_params()
 
-    feedback_filter: dict = {"sim": True}
-    if run_id:
-        feedback_filter["run_id"] = run_id
-
-    deleted_feedback = await db[FEEDBACK_COLLECTION].delete_many(feedback_filter)
-    deleted_bandit = await db[BANDIT_COLLECTION].delete_many({})
-
-    await close_mongo()
+    await close_db()
 
     return {
-        "deleted_feedback_events": deleted_feedback.deleted_count,
-        "reset_bandit_params": deleted_bandit.deleted_count,
+        "deleted_feedback_events": deleted_feedback,
+        "reset_bandit_params": deleted_bandit,
         "run_id": run_id or "all",
     }

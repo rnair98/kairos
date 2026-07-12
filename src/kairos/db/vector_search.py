@@ -1,4 +1,8 @@
-"""MongoDB Atlas vector search with in-memory cosine fallback."""
+"""libSQL native vector search with in-memory cosine fallback.
+
+Scores are raw cosine similarity (1 − cosine distance), matching the in-memory
+fallback path — unlike Atlas, both paths now share one scale.
+"""
 
 from __future__ import annotations
 
@@ -6,46 +10,14 @@ import logging
 from typing import Any
 
 from kairos.config import settings
-from kairos.db.mongo import get_database
+from kairos.db.engine import doc_loads, run, vector_param, vector_supported
 from kairos.embeddings.similarity import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
-CLUSTERS_COLLECTION = "clusters"
-BOOKMARKS_COLLECTION = "bookmarks"
-
 
 async def ensure_vector_indexes() -> None:
-    """Best-effort Atlas vector index creation (no-op on local MongoDB)."""
-    if not settings.mongodb_vector_search_enabled:
-        return
-    dims = settings.gemini_embedding_dimensions
-    db = get_database()
-    for collection, index_name, path in (
-        (CLUSTERS_COLLECTION, settings.mongodb_clusters_vector_index, "centroid_embedding"),
-        (BOOKMARKS_COLLECTION, settings.mongodb_bookmarks_vector_index, "embedding"),
-    ):
-        try:
-            await db[collection].create_search_index(
-                {
-                    "name": index_name,
-                    "definition": {
-                        "mappings": {
-                            "dynamic": False,
-                            "fields": {
-                                path: {
-                                    "type": "knnVector",
-                                    "dimensions": dims,
-                                    "similarity": "cosine",
-                                }
-                            },
-                        }
-                    },
-                }
-            )
-            logger.info("Vector search index ensured: %s.%s", collection, index_name)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Vector index %s on %s skipped: %s", index_name, collection, exc)
+    """Exact scans are sub-ms at this corpus size — no ANN index needed yet."""
 
 
 async def search_clusters_by_vector(
@@ -54,49 +26,36 @@ async def search_clusters_by_vector(
     limit: int = 50,
     exclude_cluster_ids: set[str] | None = None,
 ) -> list[tuple[dict[str, Any], float]] | None:
-    """Return ranked (cluster, vector_score) via Atlas $vectorSearch, or None to fallback."""
-    if not settings.mongodb_vector_search_enabled:
+    """Return ranked (cluster, vector_score) via libSQL, or None to fallback."""
+    if not settings.vector_search_enabled:
         return None
-
     exclude = list(exclude_cluster_ids or [])
-    num_candidates = max(limit * 4, settings.vector_search_num_candidates)
-    pipeline: list[dict[str, Any]] = [
-        {
-            "$vectorSearch": {
-                "index": settings.mongodb_clusters_vector_index,
-                "path": "centroid_embedding",
-                "queryVector": query_vector,
-                "numCandidates": num_candidates,
-                "limit": limit + len(exclude),
-                **(
-                    {"filter": {"cluster_id": {"$nin": exclude}}}
-                    if exclude
-                    else {}
-                ),
-            }
-        },
-        {
-            "$project": {
-                "cluster_id": 1,
-                "name": 1,
-                "summary": 1,
-                "centroid_embedding": 1,
-                "member_count": 1,
-                "evergreen": 1,
-                "embedding_model": 1,
-                "last_updated": 1,
-                "vector_score": {"$meta": "vectorSearchScore"},
-            }
-        },
-        {"$limit": limit},
-    ]
+
+    def _task(conn: Any) -> list[tuple[dict[str, Any], float]] | None:
+        if not vector_supported(conn):
+            return None
+        where = "WHERE centroid_embedding IS NOT NULL"
+        params: list[Any] = [vector_param(query_vector)]
+        if exclude:
+            placeholders = ",".join("?" for _ in exclude)
+            where += f" AND cluster_id NOT IN ({placeholders})"
+            params.extend(exclude)
+        params.append(limit)
+        rows = conn.execute(
+            f"""
+            SELECT doc, vector_distance_cos(centroid_embedding, vector32(?)) AS dist
+            FROM clusters
+            {where}
+            ORDER BY dist ASC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+        return [(doc_loads(row[0]), 1.0 - float(row[1])) for row in rows]
 
     try:
-        cursor = get_database()[CLUSTERS_COLLECTION].aggregate(pipeline)
-        rows = await cursor.to_list(length=limit)
-        if not rows:
-            return None
-        return [(row, float(row.get("vector_score") or 0.0)) for row in rows]
+        results = await run(_task)
+        return results or None
     except Exception as exc:  # noqa: BLE001
         logger.debug("Cluster vector search unavailable, using fallback: %s", exc)
         return None
@@ -107,39 +66,28 @@ async def search_bookmarks_by_vector(
     *,
     limit: int = 5,
 ) -> list[tuple[dict[str, Any], float]] | None:
-    """Return ranked (bookmark, vector_score) via Atlas $vectorSearch, or None to fallback."""
-    if not settings.mongodb_vector_search_enabled:
+    """Return ranked (bookmark, vector_score) via libSQL, or None to fallback."""
+    if not settings.vector_search_enabled:
         return None
 
-    num_candidates = max(limit * 8, settings.vector_search_num_candidates)
-    pipeline: list[dict[str, Any]] = [
-        {
-            "$vectorSearch": {
-                "index": settings.mongodb_bookmarks_vector_index,
-                "path": "embedding",
-                "queryVector": query_vector,
-                "numCandidates": num_candidates,
-                "limit": limit,
-            }
-        },
-        {
-            "$project": {
-                "x_tweet_id": 1,
-                "url": 1,
-                "raw_text": 1,
-                "cluster_id": 1,
-                "topic_tags": 1,
-                "vector_score": {"$meta": "vectorSearchScore"},
-            }
-        },
-    ]
+    def _task(conn: Any) -> list[tuple[dict[str, Any], float]] | None:
+        if not vector_supported(conn):
+            return None
+        rows = conn.execute(
+            """
+            SELECT doc, vector_distance_cos(embedding, vector32(?)) AS dist
+            FROM bookmarks
+            WHERE embedding IS NOT NULL
+            ORDER BY dist ASC
+            LIMIT ?
+            """,
+            (vector_param(query_vector), limit),
+        ).fetchall()
+        return [(doc_loads(row[0]), 1.0 - float(row[1])) for row in rows]
 
     try:
-        cursor = get_database()[BOOKMARKS_COLLECTION].aggregate(pipeline)
-        rows = await cursor.to_list(length=limit)
-        if not rows:
-            return None
-        return [(row, float(row.get("vector_score") or 0.0)) for row in rows]
+        results = await run(_task)
+        return results or None
     except Exception as exc:  # noqa: BLE001
         logger.debug("Bookmark vector search unavailable, using fallback: %s", exc)
         return None
@@ -151,7 +99,7 @@ def rank_clusters_in_memory(
     *,
     limit: int | None = None,
 ) -> list[tuple[dict[str, Any], float]]:
-    """Cosine rank clusters already loaded from MongoDB."""
+    """Cosine rank clusters already loaded from the database."""
     scored: list[tuple[dict[str, Any], float]] = []
     for cluster in clusters:
         centroid = cluster.get("centroid_embedding")

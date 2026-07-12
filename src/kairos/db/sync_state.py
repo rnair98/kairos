@@ -5,17 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from kairos.db.mongo import get_database
-
-COLLECTION = "sync_state"
+from kairos.db.engine import doc_dumps, doc_loads, run
 
 
 async def get_sync_state(source: str = "x_bookmarks") -> dict[str, Any]:
-    doc = await get_database()[COLLECTION].find_one({"source": source})
-    if not doc:
-        return {"source": source, "last_sync_at": None, "last_pages": 0, "last_fetched": 0}
-    doc.pop("_id", None)
-    return doc
+    def _task(conn: Any) -> dict[str, Any]:
+        row = conn.execute(
+            "SELECT doc FROM sync_state WHERE source = ?", (source,)
+        ).fetchone()
+        if not row:
+            return {"source": source, "last_sync_at": None, "last_pages": 0, "last_fetched": 0}
+        return doc_loads(row[0])
+
+    return await run(_task)
 
 
 async def update_sync_state(
@@ -28,19 +30,22 @@ async def update_sync_state(
     stop_reason: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc)
-    await get_database()[COLLECTION].update_one(
-        {"source": source},
-        {
-            "$set": {
-                "source": source,
-                "last_sync_at": now,
-                "last_pages": pages,
-                "last_fetched": fetched,
-                "last_incremental": incremental,
-                "last_stopped_early": stopped_early,
-                "last_stop_reason": stop_reason,
-                "updated_at": now,
-            }
-        },
-        upsert=True,
+    doc = {
+        "source": source,
+        "last_sync_at": now,
+        "last_pages": pages,
+        "last_fetched": fetched,
+        "last_incremental": incremental,
+        "last_stopped_early": stopped_early,
+        "last_stop_reason": stop_reason,
+        "updated_at": now,
+    }
+    await run(
+        lambda conn: conn.execute(
+            """
+            INSERT INTO sync_state (source, doc) VALUES (?, ?)
+            ON CONFLICT (source) DO UPDATE SET doc = excluded.doc
+            """,
+            (source, doc_dumps(doc)),
+        )
     )

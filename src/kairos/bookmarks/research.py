@@ -1,4 +1,4 @@
-"""Backfill upfront web research on bookmarks stored in MongoDB."""
+"""Backfill upfront web research on bookmarks stored in the database."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from kairos.bookmarks.link_fetch import (
 from kairos.bookmarks.urls import compose_research_input
 from kairos.config import settings
 from kairos.db.bookmarks import apply_link_preview, apply_research_batch, list_bookmarks_for_research
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.llm.research import research_bookmark
 from kairos.models.schemas import BookmarkResearch
 
@@ -177,6 +177,6 @@ async def research_stored_bookmarks(
             gemini_limit,
         )
     finally:
-        await close_mongo()
+        await close_db()
 
     return result

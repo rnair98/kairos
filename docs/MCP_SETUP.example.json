@@ -5,7 +5,6 @@
       "args": ["run", "kairos", "mcp"],
       "cwd": "/absolute/path/to/kairos",
       "env": {
-        "MONGODB_URI": "your-mongodb-uri",
         "GEMINI_API_KEY": "your-gemini-key",
         "KAIROS_USER_ID": "google-sub-after-connect"
       }

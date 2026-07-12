@@ -1,4 +1,4 @@
-"""CLI helpers for reading bookmarks from MongoDB."""
+"""CLI helpers for reading bookmarks from the database."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import orjson
 from typing import Any
 
 from kairos.db.bookmarks import count_bookmarks, get_by_x_tweet_id, list_bookmarks
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 
 
 def _serialize_doc(doc: dict[str, Any]) -> dict[str, Any]:
@@ -34,7 +34,7 @@ async def fetch_bookmarks(
     skip: int = 0,
     x_tweet_id: str | None = None,
 ) -> dict[str, Any]:
-    """Fetch bookmark(s) from MongoDB."""
+    """Fetch bookmark(s) from the database."""
     try:
         if x_tweet_id:
             doc = await get_by_x_tweet_id(x_tweet_id)
@@ -56,7 +56,7 @@ async def fetch_bookmarks(
             "bookmarks": [_serialize_doc(doc) for doc in docs],
         }
     finally:
-        await close_mongo()
+        await close_db()
 
 
 def format_bookmarks_table(result: dict[str, Any]) -> str:

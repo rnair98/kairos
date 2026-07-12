@@ -41,7 +41,7 @@ class PrepJobResult(BaseModel):
 
 
 class PrepJobRecord(BaseModel):
-    """Mongo-backed prep job document."""
+    """Database-backed prep job document."""
 
     job_id: str
     status: PrepJobStatus = "pending"

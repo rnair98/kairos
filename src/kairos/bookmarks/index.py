@@ -1,4 +1,4 @@
-"""Embed and cluster bookmarks stored in MongoDB."""
+"""Embed and cluster bookmarks stored in the database."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from uuid import uuid4
 
 import numpy as np
 
-from kairos.db.bookmarks import apply_embeddings_batch, list_all_bookmarks
+from kairos.db.bookmarks import apply_embeddings_batch, assign_clusters_bulk, list_all_bookmarks
 from kairos.db.clusters import ensure_cluster_indexes, list_clusters, replace_all_clusters
-from kairos.db.mongo import close_mongo, get_database
+from kairos.db.engine import close_db
 from kairos.embeddings.encoder import bookmark_embed_text, encode_documents, effective_embedding_model
 from kairos.embeddings.similarity import cosine_similarity
 from kairos.bookmarks.fingerprints import embed_fingerprint
@@ -59,7 +59,7 @@ async def embed_stored_bookmarks(
     limit: int | None = None,
     force: bool = False,
 ) -> EmbedResult:
-    """Compute and persist embeddings for MongoDB bookmarks."""
+    """Compute and persist embeddings for the database bookmarks."""
     result = EmbedResult()
     try:
         docs = await list_all_bookmarks(limit=limit)
@@ -98,7 +98,7 @@ async def embed_stored_bookmarks(
             len(vectors[0]) if vectors else 0,
         )
     finally:
-        await close_mongo()
+        await close_db()
 
     return result
 
@@ -235,10 +235,7 @@ async def cluster_stored_bookmarks(
         await replace_all_clusters(cluster_records)
         result.clusters = len(cluster_records)
 
-        db = get_database()
-        from pymongo import UpdateOne
-
-        ops: list[UpdateOne] = []
+        assignments: list[tuple[str, str | None]] = []
         clustered = 0
         noise = 0
         for doc, label in zip(embedded, labels, strict=True):
@@ -247,14 +244,14 @@ async def cluster_stored_bookmarks(
                 continue
             if label == -1:
                 noise += 1
-                ops.append(UpdateOne({"x_tweet_id": x_tweet_id}, {"$set": {"cluster_id": None}}))
+                assignments.append((x_tweet_id, None))
                 continue
             cluster_id = label_to_cluster_id[label]
-            ops.append(UpdateOne({"x_tweet_id": x_tweet_id}, {"$set": {"cluster_id": cluster_id}}))
+            assignments.append((x_tweet_id, cluster_id))
             clustered += 1
 
-        if ops:
-            await db.bookmarks.bulk_write(ops, ordered=False)
+        if assignments:
+            await assign_clusters_bulk(assignments)
 
         result.clustered = clustered
         result.noise = noise
@@ -265,7 +262,7 @@ async def cluster_stored_bookmarks(
             noise,
         )
     finally:
-        await close_mongo()
+        await close_db()
 
     return result
 
@@ -298,4 +295,4 @@ async def fetch_cluster_catalog() -> list[dict[str, Any]]:
     try:
         return await list_clusters()
     finally:
-        await close_mongo()
+        await close_db()

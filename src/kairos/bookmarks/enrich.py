@@ -1,4 +1,4 @@
-"""Backfill Gemini enrichment on bookmarks stored in MongoDB."""
+"""Backfill Gemini enrichment on bookmarks stored in the database."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from kairos.bookmarks.fingerprints import enrich_source_hash
 from kairos.db.bookmarks import apply_enrichments_batch, list_all_bookmarks
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.llm.enrich_batch import EnrichmentJob, enrich_jobs_concurrent
 from kairos.models.schemas import BookmarkDocument
 
@@ -42,7 +42,7 @@ async def enrich_stored_bookmarks(
     dry_run: bool = False,
     concurrency: int | None = None,
 ) -> EnrichResult:
-    """Run Gemini enrichment on MongoDB bookmarks (no X API re-fetch)."""
+    """Run Gemini enrichment on the database bookmarks (no X API re-fetch)."""
     result = EnrichResult()
     try:
         docs = await list_all_bookmarks(limit=limit)
@@ -109,10 +109,10 @@ async def enrich_stored_bookmarks(
         result.enriched = written
         if written < len(updates):
             missing = len(updates) - written
-            result.errors.append(f"{missing} bookmark(s) not found during MongoDB write")
+            result.errors.append(f"{missing} bookmark(s) not found during database write")
 
         logger.info("Enriched %s bookmark(s) with concurrency=%s", written, concurrency)
     finally:
-        await close_mongo()
+        await close_db()
 
     return result

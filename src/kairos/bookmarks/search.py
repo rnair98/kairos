@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from kairos.db.bookmarks import list_all_bookmarks
-from kairos.db.mongo import close_mongo
+from kairos.db.engine import close_db
 from kairos.db.vector_search import search_bookmarks_by_vector
 from kairos.embeddings.encoder import encode_query
 from kairos.embeddings.similarity import cosine_similarity
@@ -14,7 +14,7 @@ async def search_bookmarks(
     *,
     limit: int = 5,
 ) -> list[dict]:
-    """Rank bookmarks by cosine similarity to query (Atlas vector search or fallback)."""
+    """Rank bookmarks by cosine similarity to query (libSQL vector search or fallback)."""
     try:
         vector = encode_query(query)
         hits = await search_bookmarks_by_vector(vector, limit=limit)
@@ -44,4 +44,4 @@ async def search_bookmarks(
             )
         return results
     finally:
-        await close_mongo()
+        await close_db()

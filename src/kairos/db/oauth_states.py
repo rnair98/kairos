@@ -3,28 +3,47 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from kairos.db.mongo import get_database
+from kairos.db.engine import iso, run
 
-COLLECTION = "oauth_states"
 TTL_SECONDS = 600
 
 
+def _cutoff() -> str:
+    return iso(datetime.now(timezone.utc) - timedelta(seconds=TTL_SECONDS))
+
+
 async def ensure_oauth_state_indexes() -> None:
-    db = get_database()
-    await db[COLLECTION].create_index("created_at", expireAfterSeconds=TTL_SECONDS)
+    """Schema (tables + indexes) is created by the engine — nothing to do."""
 
 
 async def save_oauth_state(state: str) -> None:
-    await ensure_oauth_state_indexes()
-    await get_database()[COLLECTION].insert_one(
-        {
-            "_id": state,
-            "created_at": datetime.now(timezone.utc),
-        }
-    )
+    now = iso(datetime.now(timezone.utc))
+    cutoff = _cutoff()
+
+    def _task(conn: Any) -> None:
+        conn.execute("DELETE FROM oauth_states WHERE created_at < ?", (cutoff,))
+        conn.execute(
+            """
+            INSERT INTO oauth_states (state, created_at) VALUES (?, ?)
+            ON CONFLICT (state) DO UPDATE SET created_at = excluded.created_at
+            """,
+            (state, now),
+        )
+
+    await run(_task)
 
 
 async def consume_oauth_state(state: str) -> bool:
-    doc = await get_database()[COLLECTION].find_one_and_delete({"_id": state})
-    return doc is not None
+    cutoff = _cutoff()
+
+    def _task(conn: Any) -> bool:
+        rows = conn.execute(
+            "DELETE FROM oauth_states WHERE state = ? AND created_at >= ? RETURNING state",
+            (state, cutoff),
+        ).fetchall()
+        conn.execute("DELETE FROM oauth_states WHERE created_at < ?", (cutoff,))
+        return bool(rows)
+
+    return await run(_task)

@@ -21,7 +21,7 @@ Legend: ✅ done · 🚧 in progress · ⏳ planned · 🔒 keep (intentional cu
 | Item | Status | Action |
 |------|--------|--------|
 | User-scoped notifications | ✅ | `list_notifications(user_id=…)`; feedback ownership check |
-| Shared event stream | ✅ | Mongo `pipeline_events` + TTL; SSE replays persisted log |
+| Shared event stream | ✅ | the `pipeline_events` table + TTL; SSE replays persisted log |
 | Job queue for prep | ✅ | `POST /api/prep/start` + `GET /api/prep/{job_id}`; optional Arq worker |
 | Incremental cluster assign | ✅ | Batch assign embedded bookmarks only (no global null) |
 | Google path unification | ✅ | `fuse_and_persist_headspace` shared by sync, MCP, web |
@@ -32,7 +32,7 @@ Legend: ✅ done · 🚧 in progress · ⏳ planned · 🔒 keep (intentional cu
 |------|--------|-----------|
 | Beta Thompson bandit | 🔒 | Correct for sparse feedback + few clusters |
 | HeartbeatService | 🔒 | Product core |
-| HDBSCAN + Atlas vector search | 🔒 | Standard stack |
+| HDBSCAN + libSQL vector search | 🔒 | Standard stack |
 | FastMCP thin wrapper | 🔒 | Not reinventing MCP |
 | ADK agent path | ✅ | Sensor fusion via MCP; `via_agent` on heartbeat API/CLI; not default |
 | GEPA / DSPy | ✅ | Eval harness + `kairos optimize run|readiness|eval` |
@@ -64,7 +64,7 @@ just demo-serve
 |-----|---------|--------|
 | `INTELLIGENCE_DIGEST_RUNTIME_FAST` | `false` | Single LLM digest call at surface |
 | `CLUSTER_ID_REUSE_THRESHOLD` | `0.88` | Keep cluster_id across recluster |
-| `EVENT_PERSIST_ENABLED` | `true` | Write pipeline events to Mongo |
+| `EVENT_PERSIST_ENABLED` | `true` | Write pipeline events to the database |
 | `EVENT_PERSIST_TTL_DAYS` | `7` | TTL on `pipeline_events` collection |
 | `JOB_BACKEND` | `local` | `local` = FastAPI background; `arq` = Redis worker |
 | `REDIS_URL` | `redis://127.0.0.1:6379` | Arq broker when `JOB_BACKEND=arq` |
@@ -83,11 +83,11 @@ Typed shapes under `src/kairos/models/`:
 | Module | Models | Use |
 |--------|--------|-----|
 | `schemas.py` | `ContextSnapshot`, `ClusterDigest`, `DigestLinkCard`, `HeartbeatResult` | Policy core, API |
-| `jobs.py` | `PrepJobParams`, `PrepJobRecord`, `PrepJobResult` | Prep API + Mongo |
+| `jobs.py` | `PrepJobParams`, `PrepJobRecord`, `PrepJobResult` | Prep API + database |
 | `optimize.py` | `GepaReadiness`, `GepaRunResult`, `FixtureEvalResult` | GEPA CLI |
 | `sensors.py` | `CalendarEvent`, `EmailThread`, `FuseHeadspacePayload` | MCP / web fuse |
 
-**Still `dict` (future):** raw MCP calendar/email in `FuseHeadspaceRequest`, Mongo bandit rows. Pipeline stages use `@dataclass` internally — fine.
+**Still `dict` (future):** raw MCP calendar/email in `FuseHeadspaceRequest`, database bandit rows. Pipeline stages use `@dataclass` internally — fine.
 
 ---
 
@@ -111,7 +111,7 @@ Prioritized after the current demo-ready stack. See also [PLAN.md](../PLAN.md) s
 | **High** | Latest learning trace panel | Compact dashboard proof: context → rank → gate → feedback → β update from `pipeline_events` |
 | **High** | Treatment lift visualization | Show `bandit_treatments` so GEPA prompt changes become measurable treatments |
 | **Medium** | Exact LLM trace join | Add `decision_id`, prompt version, input/output, latency, reward |
-| **Medium** | Redis SSE fan-out | Mongo `pipeline_events` works cross-process; optional Redis pub/sub for lower latency |
+| **Medium** | Redis SSE fan-out | the `pipeline_events` table works cross-process; optional Redis pub/sub for lower latency |
 | **Low** | OS delivery adapter | `terminal-notifier` path exists but optional |
 | **Low** | Sleep-time consolidation | Pre-compute headspace narratives / cluster dossiers off-peak |
 | **Low** | Multi-source ingest | Pocket, Readwise export — not X-only |

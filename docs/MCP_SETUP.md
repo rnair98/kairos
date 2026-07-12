@@ -33,7 +33,7 @@ uv run kairos mcp
 Copy [MCP_SETUP.example.json](./MCP_SETUP.example.json) and set:
 
 - `cwd` — absolute path to this repo
-- `env` — `MONGODB_URI`, `GEMINI_API_KEY`, `KAIROS_USER_ID` (after connect)
+- `env` — `GEMINI_API_KEY`, `KAIROS_USER_ID` (after connect); storage is a local `kairos.db` file, no env var needed
 
 ```json
 {
@@ -43,7 +43,6 @@ Copy [MCP_SETUP.example.json](./MCP_SETUP.example.json) and set:
       "args": ["run", "kairos", "mcp"],
       "cwd": "/Users/you/sandbox/kairos",
       "env": {
-        "MONGODB_URI": "...",
         "GEMINI_API_KEY": "...",
         "KAIROS_USER_ID": "google-sub-after-connect"
       }
@@ -74,9 +73,7 @@ Or two-step: `start_google_connect` → user consents → `wait_google_connect(s
 
 Both invoke the same `HeartbeatService` after headspace is fused.
 
-## Demo loop prompt (Claude Code — Kairos MCP)
-
-Full rehearsal guide: [demo-readiness/DEMO.md](./demo-readiness/DEMO.md) (§ MCP)
+## Loop Prompt (Claude Code — Kairos MCP)
 
 ```
 /loop 5m
@@ -85,7 +82,7 @@ Full rehearsal guide: [demo-readiness/DEMO.md](./demo-readiness/DEMO.md) (§ MCP
 If SURFACE, show delivery.rendered_markdown. On dismiss, record_feedback.
 ```
 
-Browser + MCP in parallel: `just demo-serve` while the loop runs. Runbook: [demo-readiness/DEMO.md](./demo-readiness/DEMO.md).
+Browser + MCP in parallel: `just demo-serve` while the loop runs.
 
 ## Transport
 
@@ -96,4 +93,4 @@ Browser + MCP in parallel: `just demo-serve` while the loop runs. Runbook: [demo
 
 ## Environment
 
-Loads `.env` from repo root via `pydantic-settings`. Requires MongoDB + Gemini. Google OAuth uses `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` from `.env`.
+Loads `.env` from repo root via `pydantic-settings`. Requires Gemini (storage is a local libSQL/Turso file, no setup needed). Google OAuth uses `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` from `.env`.

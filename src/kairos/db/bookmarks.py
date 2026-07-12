@@ -5,14 +5,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-import asyncio
-
 from kairos.bookmarks.fingerprints import enrich_source_hash
+from kairos.db.engine import (
+    doc_dumps,
+    doc_loads,
+    iso,
+    run,
+    vector_param,
+    vector_supported,
+)
 from kairos.embeddings.encoder import effective_embedding_model
-from kairos.db.mongo import get_database
 from kairos.models.schemas import BookmarkDocument, BookmarkResearch
-
-COLLECTION = "bookmarks"
 
 DERIVED_FIELDS_ON_TEXT_CHANGE = (
     "embedding",
@@ -41,18 +44,101 @@ DERIVED_FIELDS_ON_TEXT_CHANGE = (
 
 
 async def ensure_bookmark_indexes() -> None:
-    db = get_database()
-    await db[COLLECTION].create_index("x_tweet_id", unique=True)
-    await db[COLLECTION].create_index("cluster_id")
-    await db[COLLECTION].create_index("last_synced_at")
+    """Schema (tables + indexes) is created by the engine — nothing to do."""
+
+
+def _hot_fields(doc: dict[str, Any]) -> tuple[Any, Any, Any, Any, int]:
+    embedding = doc.get("embedding")
+    return (
+        doc.get("cluster_id"),
+        iso(doc["ingested_at"]) if isinstance(doc.get("ingested_at"), datetime) else doc.get("ingested_at"),
+        iso(doc["tweet_created_at"]) if isinstance(doc.get("tweet_created_at"), datetime) else doc.get("tweet_created_at"),
+        iso(doc["last_synced_at"]) if isinstance(doc.get("last_synced_at"), datetime) else doc.get("last_synced_at"),
+        1 if embedding else 0,
+    )
+
+
+def _write_doc_sync(conn: Any, x_tweet_id: str, doc: dict[str, Any]) -> None:
+    cluster_id, ingested_at, tweet_created_at, last_synced_at, has_embedding = _hot_fields(doc)
+    embedding = doc.get("embedding")
+    if embedding and vector_supported(conn):
+        conn.execute(
+            """
+            INSERT INTO bookmarks (x_tweet_id, cluster_id, ingested_at, tweet_created_at,
+                                   last_synced_at, has_embedding, embedding, doc)
+            VALUES (?, ?, ?, ?, ?, ?, vector32(?), ?)
+            ON CONFLICT (x_tweet_id) DO UPDATE SET
+                cluster_id = excluded.cluster_id,
+                ingested_at = excluded.ingested_at,
+                tweet_created_at = excluded.tweet_created_at,
+                last_synced_at = excluded.last_synced_at,
+                has_embedding = excluded.has_embedding,
+                embedding = excluded.embedding,
+                doc = excluded.doc
+            """,
+            (
+                x_tweet_id,
+                cluster_id,
+                ingested_at,
+                tweet_created_at,
+                last_synced_at,
+                has_embedding,
+                vector_param(embedding),
+                doc_dumps(doc),
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO bookmarks (x_tweet_id, cluster_id, ingested_at, tweet_created_at,
+                                   last_synced_at, has_embedding, embedding, doc)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT (x_tweet_id) DO UPDATE SET
+                cluster_id = excluded.cluster_id,
+                ingested_at = excluded.ingested_at,
+                tweet_created_at = excluded.tweet_created_at,
+                last_synced_at = excluded.last_synced_at,
+                has_embedding = excluded.has_embedding,
+                embedding = excluded.embedding,
+                doc = excluded.doc
+            """,
+            (
+                x_tweet_id,
+                cluster_id,
+                ingested_at,
+                tweet_created_at,
+                last_synced_at,
+                has_embedding,
+                doc_dumps(doc),
+            ),
+        )
+
+
+def _load_doc_sync(conn: Any, x_tweet_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT doc FROM bookmarks WHERE x_tweet_id = ?", (x_tweet_id,)
+    ).fetchone()
+    return doc_loads(row[0]) if row else None
+
+
+def _merge_fields_sync(conn: Any, x_tweet_id: str, fields: dict[str, Any]) -> bool:
+    """Merge-update helper: merge fields into the stored doc. Returns matched."""
+    doc = _load_doc_sync(conn, x_tweet_id)
+    if doc is None:
+        return False
+    doc.update(fields)
+    _write_doc_sync(conn, x_tweet_id, doc)
+    return True
 
 
 async def get_by_x_tweet_id(x_tweet_id: str) -> dict[str, Any] | None:
-    return await get_database()[COLLECTION].find_one({"x_tweet_id": x_tweet_id})
+    return await run(lambda conn: _load_doc_sync(conn, x_tweet_id))
 
 
 async def count_bookmarks() -> int:
-    return await get_database()[COLLECTION].count_documents({})
+    return await run(
+        lambda conn: int(conn.execute("SELECT COUNT(*) FROM bookmarks").fetchone()[0])
+    )
 
 
 async def list_bookmarks(
@@ -61,14 +147,19 @@ async def list_bookmarks(
     skip: int = 0,
 ) -> list[dict[str, Any]]:
     """Return bookmarks newest-first by ingested_at, then tweet_created_at."""
-    cursor = (
-        get_database()[COLLECTION]
-        .find({})
-        .sort([("ingested_at", -1), ("tweet_created_at", -1)])
-        .skip(skip)
-        .limit(limit)
+    return await run(
+        lambda conn: [
+            doc_loads(row[0])
+            for row in conn.execute(
+                """
+                SELECT doc FROM bookmarks
+                ORDER BY ingested_at DESC, tweet_created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, skip),
+            ).fetchall()
+        ]
     )
-    return await cursor.to_list(length=limit)
 
 
 async def list_bookmarks_by_cluster(
@@ -77,13 +168,20 @@ async def list_bookmarks_by_cluster(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Return bookmarks assigned to a cluster."""
-    cursor = (
-        get_database()[COLLECTION]
-        .find({"cluster_id": cluster_id})
-        .sort([("ingested_at", -1)])
-        .limit(limit)
+    return await run(
+        lambda conn: [
+            doc_loads(row[0])
+            for row in conn.execute(
+                """
+                SELECT doc FROM bookmarks
+                WHERE cluster_id = ?
+                ORDER BY ingested_at DESC
+                LIMIT ?
+                """,
+                (cluster_id, limit),
+            ).fetchall()
+        ]
     )
-    return await cursor.to_list(length=limit)
 
 
 async def list_all_bookmarks(*, limit: int | None = None) -> list[dict[str, Any]]:
@@ -97,22 +195,30 @@ async def list_bookmarks_for_research(
     clustered_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Bookmarks eligible for research — optionally only those assigned to clusters."""
-    query: dict[str, Any] = {}
-    if clustered_only:
-        query["cluster_id"] = {"$exists": True, "$nin": [None, ""]}
-    cursor = get_database()[COLLECTION].find(query).sort([("ingested_at", -1)])
-    if limit is not None:
-        cursor = cursor.limit(limit)
-    return await cursor.to_list(length=limit or 10_000)
+    where = "WHERE cluster_id IS NOT NULL AND cluster_id != ''" if clustered_only else ""
+    cap = limit if limit is not None else 10_000
+    return await run(
+        lambda conn: [
+            doc_loads(row[0])
+            for row in conn.execute(
+                f"SELECT doc FROM bookmarks {where} ORDER BY ingested_at DESC LIMIT ?",
+                (cap,),
+            ).fetchall()
+        ]
+    )
 
 
 async def count_unclustered_embedded() -> int:
     """Bookmarks with embeddings but no cluster assignment."""
-    return await get_database()[COLLECTION].count_documents(
-        {
-            "embedding": {"$exists": True, "$ne": None},
-            "$or": [{"cluster_id": None}, {"cluster_id": {"$exists": False}}],
-        }
+    return await run(
+        lambda conn: int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM bookmarks
+                WHERE has_embedding = 1 AND (cluster_id IS NULL OR cluster_id = '')
+                """
+            ).fetchone()[0]
+        )
     )
 
 
@@ -131,35 +237,26 @@ async def apply_enrichment(x_tweet_id: str, doc: BookmarkDocument) -> bool:
     )
     payload["enrich_source_hash"] = enrich_source_hash(doc.raw_text)
     payload["last_synced_at"] = now
-    result = await get_database()[COLLECTION].update_one(
-        {"x_tweet_id": x_tweet_id},
-        {"$set": payload},
-    )
-    return result.matched_count > 0
+    return await run(lambda conn: _merge_fields_sync(conn, x_tweet_id, payload))
 
 
 async def apply_enrichments_batch(docs: list[tuple[str, BookmarkDocument]]) -> int:
-    """Apply enrichment updates in parallel. Returns count of matched documents."""
-    if not docs:
-        return 0
-    results = await asyncio.gather(*(apply_enrichment(tid, doc) for tid, doc in docs))
-    return sum(1 for ok in results if ok)
+    """Apply enrichment updates sequentially. Returns count of matched documents."""
+    matched = 0
+    for tid, doc in docs:
+        if await apply_enrichment(tid, doc):
+            matched += 1
+    return matched
 
 
 async def apply_link_preview(x_tweet_id: str, preview: dict[str, Any]) -> bool:
     """Persist fetched link metadata on a bookmark."""
-    from datetime import datetime, timezone
-
     now = datetime.now(timezone.utc)
     payload = {
         **preview,
         "link_fetched_at": now,
     }
-    result = await get_database()[COLLECTION].update_one(
-        {"x_tweet_id": x_tweet_id},
-        {"$set": payload},
-    )
-    return result.matched_count > 0
+    return await run(lambda conn: _merge_fields_sync(conn, x_tweet_id, payload))
 
 
 async def apply_research(x_tweet_id: str, research: BookmarkResearch, *, source_hash: str) -> bool:
@@ -173,50 +270,62 @@ async def apply_research(x_tweet_id: str, research: BookmarkResearch, *, source_
         "researched_at": now,
         "research_source_hash": source_hash,
     }
-    result = await get_database()[COLLECTION].update_one(
-        {"x_tweet_id": x_tweet_id},
-        {"$set": payload},
-    )
-    return result.matched_count > 0
+    return await run(lambda conn: _merge_fields_sync(conn, x_tweet_id, payload))
 
 
 async def apply_research_batch(
     updates: list[tuple[str, BookmarkResearch, str]],
 ) -> int:
-    """Apply research updates in parallel. Returns count of matched documents."""
-    if not updates:
-        return 0
-    results = await asyncio.gather(
-        *(apply_research(tid, research, source_hash=h) for tid, research, h in updates)
-    )
-    return sum(1 for ok in results if ok)
+    """Apply research updates sequentially. Returns count of matched documents."""
+    matched = 0
+    for tid, research, source_hash in updates:
+        if await apply_research(tid, research, source_hash=source_hash):
+            matched += 1
+    return matched
 
 
 async def apply_embeddings_batch(updates: list[tuple[str, list[float], str]]) -> int:
     """Bulk-write embeddings with fingerprint + model metadata."""
     if not updates:
         return 0
-    from pymongo import UpdateOne
-
     now = datetime.now(timezone.utc)
-    db = get_database()
-    ops = [
-        UpdateOne(
-            {"x_tweet_id": x_tweet_id},
-            {
-                "$set": {
-                    "embedding": embedding,
-                    "embed_fingerprint": fingerprint,
-                    "embedding_model": effective_embedding_model(),
-                    "last_synced_at": now,
-                },
-                "$unset": {"cluster_id": ""},
-            },
-        )
-        for x_tweet_id, embedding, fingerprint in updates
-    ]
-    result = await db[COLLECTION].bulk_write(ops, ordered=False)
-    return result.matched_count
+    model = effective_embedding_model()
+
+    def _task(conn: Any) -> int:
+        matched = 0
+        for x_tweet_id, embedding, fingerprint in updates:
+            doc = _load_doc_sync(conn, x_tweet_id)
+            if doc is None:
+                continue
+            doc["embedding"] = embedding
+            doc["embed_fingerprint"] = fingerprint
+            doc["embedding_model"] = model
+            doc["last_synced_at"] = now
+            doc.pop("cluster_id", None)
+            _write_doc_sync(conn, x_tweet_id, doc)
+            matched += 1
+        return matched
+
+    return await run(_task)
+
+
+async def assign_clusters_bulk(assignments: list[tuple[str, str | None]]) -> int:
+    """Set cluster_id (or None for noise) on many bookmarks. Returns matched count."""
+    if not assignments:
+        return 0
+
+    def _task(conn: Any) -> int:
+        matched = 0
+        for x_tweet_id, cluster_id in assignments:
+            doc = _load_doc_sync(conn, x_tweet_id)
+            if doc is None:
+                continue
+            doc["cluster_id"] = cluster_id
+            _write_doc_sync(conn, x_tweet_id, doc)
+            matched += 1
+        return matched
+
+    return await run(_task)
 
 
 async def upsert_bookmark(doc: BookmarkDocument) -> str:
@@ -227,25 +336,30 @@ async def upsert_bookmark(doc: BookmarkDocument) -> str:
     if doc.consumption_mode is not None or doc.topic_tags:
         payload["enrich_source_hash"] = enrich_source_hash(doc.raw_text)
 
-    existing = await get_by_x_tweet_id(doc.x_tweet_id)
-    text_changed = existing and existing.get("raw_text") != doc.raw_text
+    def _task(conn: Any) -> str:
+        existing = _load_doc_sync(conn, doc.x_tweet_id)
+        text_changed = bool(existing) and existing.get("raw_text") != doc.raw_text
 
-    if existing and not text_changed and doc.raw_text == existing.get("raw_text") and doc.embedding is None:
-        await get_database()[COLLECTION].update_one(
-            {"x_tweet_id": doc.x_tweet_id},
-            {"$set": {"last_synced_at": now}},
-        )
-        return "unchanged"
+        if existing and not text_changed and doc.embedding is None:
+            existing["last_synced_at"] = now
+            _write_doc_sync(conn, doc.x_tweet_id, existing)
+            return "unchanged"
 
-    if existing:
-        payload.setdefault("ingested_at", existing.get("ingested_at", now))
-        update: dict[str, Any] = {"$set": payload}
-        if text_changed:
-            update["$unset"] = {field: "" for field in DERIVED_FIELDS_ON_TEXT_CHANGE}
-        await get_database()[COLLECTION].update_one({"x_tweet_id": doc.x_tweet_id}, update)
-        return "updated"
+        if existing:
+            payload.setdefault("ingested_at", existing.get("ingested_at", now))
+            merged = dict(existing)
+            merged.update(payload)
+            if text_changed:
+                for field in DERIVED_FIELDS_ON_TEXT_CHANGE:
+                    merged.pop(field, None)
+                    if field in payload:
+                        merged[field] = payload[field]
+            _write_doc_sync(conn, doc.x_tweet_id, merged)
+            return "updated"
 
-    payload.setdefault("ingested_at", now)
-    payload.setdefault("surface_count", 0)
-    await get_database()[COLLECTION].insert_one(payload)
-    return "inserted"
+        payload.setdefault("ingested_at", now)
+        payload.setdefault("surface_count", 0)
+        _write_doc_sync(conn, doc.x_tweet_id, payload)
+        return "inserted"
+
+    return await run(_task)
