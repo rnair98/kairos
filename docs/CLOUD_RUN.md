@@ -11,7 +11,7 @@ gcloud run deploy kairos \
   --min-instances 1 \
   --memory 512Mi \
   --set-env-vars "EMBEDDING_BACKEND=gemini,VECTOR_SEARCH_ENABLED=true" \
-  --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,TURSO_DATABASE_URL=turso-database-url:latest,TURSO_AUTH_TOKEN=turso-auth-token:latest"
+  --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,EXA_API_KEY=exa-api-key:latest,TURSO_DATABASE_URL=turso-database-url:latest,TURSO_AUTH_TOKEN=turso-auth-token:latest"
 ```
 
 Required env vars:
@@ -19,6 +19,7 @@ Required env vars:
 | Variable | Purpose |
 |----------|---------|
 | `GEMINI_API_KEY` | LLM + embeddings |
+| `EXA_API_KEY` | Web grounding retrieval (digest + bookmark research); omit to run ungrounded — grounding fails soft, not required |
 | `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Hosted Turso primary — omit both for a purely local `kairos.db` file (fine for single-instance Cloud Run with a mounted volume; use a hosted primary for multi-instance) |
 | `KAIROS_USER_ID` | Active user after Google OAuth |
 | `EMBEDDING_BACKEND` | `gemini` (default in container) |

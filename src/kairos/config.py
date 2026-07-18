@@ -13,8 +13,9 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash"
     gemini_flash_lite_model: str = "gemini-3.1-flash-lite"
-    digest_use_google_search: bool = True
-    digest_skip_search_evergreen: bool = True
+    digest_use_web_grounding: bool = True
+    digest_skip_grounding_evergreen: bool = True
+    grounding_provider: str = "exa"  # exa | none (none = offline/CI, no web grounding)
     intelligence_headspace_enabled: bool = True
     intelligence_digest_multistep: bool = True
     intelligence_digest_runtime_fast: bool = False
@@ -37,9 +38,13 @@ class Settings(BaseSettings):
 
     # Bookmark research (kairos bookmarks research)
     research_concurrency: int = 8
-    research_fast_mode: bool = False  # flash-lite, no Google Search when link body fetched
+    research_fast_mode: bool = False  # flash-lite, no web grounding when link body fetched
     research_min_link_chars_for_fast: int = 200
     research_clustered_only: bool = False  # skip unclustered bookmarks
+
+    # Exa — web grounding retrieval provider (search results feed Gemini synthesis)
+    exa_api_key: str | None = None
+    exa_num_results: int = 5
 
     # Log full Gemini request/response to stderr (and optional file)
     gemini_log_io: bool = False

@@ -294,7 +294,7 @@ sequenceDiagram
 
 **Policy vs intelligence:** bandit + hard gates stay deterministic. Gemini adds narrative enrichment (every tick), moment-fit check (surface path only), and digest quality (surface path only).
 
-**Performance:** budget/gap gates run before vector encode + bandit batch fetch; moment-fit and digest only run when hard gates + score threshold pass. Cluster and bookmark ranking use libSQL vector search when indexes exist, with in-memory cosine fallback. Evergreen clusters skip Google Search grounding during digest (`digest_skip_search_evergreen`). Snooze is scoped per **user × context_class**.
+**Performance:** budget/gap gates run before vector encode + bandit batch fetch; moment-fit and digest only run when hard gates + score threshold pass. Cluster and bookmark ranking use libSQL vector search when indexes exist, with in-memory cosine fallback. Evergreen clusters skip Exa web grounding during digest (`digest_skip_grounding_evergreen`). Snooze is scoped per **user × context_class**.
 
 ---
 
@@ -752,9 +752,9 @@ flowchart LR
     EmbedM -.->|"embeddings/"| EmbedEnc["gemini_encoder.py"]
 ```
 
-**Digest pipeline:** structured draft → optional Google Search grounding → LLM critique → revise if weak (`INTELLIGENCE_DIGEST_MULTISTEP`).
+**Digest pipeline:** structured draft → optional Exa web grounding (Exa retrieves, Gemini synthesizes) → LLM critique → revise if weak (`INTELLIGENCE_DIGEST_MULTISTEP`).
 
-**Env flags:** `INTELLIGENCE_HEADSPACE_ENABLED`, `INTELLIGENCE_MOMENT_FIT_CHECK`, `INTELLIGENCE_DIGEST_MULTISTEP`, `DIGEST_USE_GOOGLE_SEARCH`.
+**Env flags:** `INTELLIGENCE_HEADSPACE_ENABLED`, `INTELLIGENCE_MOMENT_FIT_CHECK`, `INTELLIGENCE_DIGEST_MULTISTEP`, `DIGEST_USE_WEB_GROUNDING`, `GROUNDING_PROVIDER`.
 
 ---
 
@@ -847,7 +847,9 @@ Central settings in `config.py` (env + `.env`):
 | `SURFACE_SCORE_THRESHOLD` | `0.12` | Min adjusted score |
 | `MIN_CALENDAR_GAP_MINUTES` | `30` | Attention capacity gate |
 | `SNOOZE_TTL_MINUTES` | `120` | Snooze exclusion window |
-| `DIGEST_USE_GOOGLE_SEARCH` | `true` | Ground digest with web |
+| `DIGEST_USE_WEB_GROUNDING` | `true` | Ground digest with web (Exa retrieval + Gemini synthesis) |
+| `GROUNDING_PROVIDER` | `exa` | Grounding retrieval backend — `exa` \| `none` |
+| `EXA_API_KEY` | unset | Exa search API key; grounding fails soft (ungrounded) without it |
 | `INTELLIGENCE_HEADSPACE_ENABLED` | `true` | LLM headspace + moment narrative |
 | `INTELLIGENCE_MOMENT_FIT_CHECK` | `true` | LLM gate before digest |
 | `INTELLIGENCE_DIGEST_MULTISTEP` | `true` | Critique + revise digest (off when runtime fast) |

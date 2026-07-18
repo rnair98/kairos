@@ -1,30 +1,27 @@
-"""Upfront web research on a bookmark via Gemini Google Search grounding.
+"""Upfront web research on a bookmark via Exa retrieval + Gemini synthesis.
 
-One grounded call retrieves current web context and validation, then a lenient
-parse extracts summary / signal / status. Sources come from grounding citations.
+Exa search retrieves current web context, then one Gemini call synthesizes a
+summary / validation signal / status. Sources come from Exa citations.
 Runs at enrich time (kairos bookmarks research), not in the live heartbeat path.
 """
 
 from __future__ import annotations
 
-import logging
 import re
 
 from kairos.bookmarks.urls import is_bare_url
 from kairos.config import settings
-from kairos.llm.grounding import parse_grounded_interaction
+from kairos.llm.grounding import search_web
 from kairos.llm.interactions import create_interaction
-from kairos.models.schemas import BookmarkResearch, RelevanceStatus
-
-logger = logging.getLogger(__name__)
+from kairos.models.schemas import BookmarkResearch, RelevanceStatus, UrlCitation
 
 _VALID_STATUS: set[str] = {"current", "dated", "stale", "unknown"}
 
 _SYSTEM = (
     "You pre-research a saved bookmark so its owner can judge relevance in one glance. "
     "The input may include fetched page content (title, description, article text) from the "
-    "linked URL, plus tweet context. Use web search at most once to verify current state. "
-    "Be concise and factual. Return exactly three lines, no preamble:\n"
+    "linked URL, tweet context, and retrieved web context. Be concise and factual. "
+    "Return exactly three lines, no preamble:\n"
     "SUMMARY: <1-2 sentences: what this is and why it mattered>\n"
     "SIGNAL: <one short clause on whether it's still worth opening — e.g. "
     "'still the canonical reference', 'superseded by X', 'author shipped v2 since', "
@@ -46,37 +43,38 @@ def _coerce_status(raw: str | None) -> RelevanceStatus:
     return "unknown"
 
 
-def _too_many_tool_calls(exc: BaseException) -> bool:
-    return "too many tool calls" in str(exc).lower()
-
-
-def _research_bookmark_once(
+def research_bookmark(
     raw_text: str,
     url: str,
     *,
-    skip_google_search: bool,
+    skip_grounding: bool = False,
 ) -> BookmarkResearch:
-    """Single Gemini call for bookmark research."""
+    """Research a bookmark: optional Exa retrieval, then one Gemini synthesis call."""
     max_chars = settings.enrich_max_input_chars
-    model = settings.gemini_flash_lite_model if skip_google_search else settings.gemini_model
-    req: dict = {
-        "model": model,
-        "input": (
+    skip = skip_grounding or settings.grounding_provider != "exa"
+    model = settings.gemini_flash_lite_model if skip else settings.gemini_model
+
+    retrieved_block = ""
+    citations: list[UrlCitation] = []
+    if not skip:
+        retrieved = search_web((raw_text or url)[:200])
+        if retrieved.text:
+            retrieved_block = f"\n\nRetrieved web context:\n{retrieved.text}"
+            citations = retrieved.citations
+
+    interaction = create_interaction(
+        label="bookmark-research-fast" if skip else "bookmark-research",
+        model=model,
+        input=(
             "Research this saved bookmark. Prefer the fetched page content when present.\n\n"
             f"URL: {url}\n\n"
             f"Context:\n{raw_text[:max_chars]}"
+            f"{retrieved_block}"
         ),
-        "system_instruction": _SYSTEM,
-        "store": False,
-    }
-    if not skip_google_search:
-        req["tools"] = [{"type": "google_search"}]
-    interaction = create_interaction(
-        label="bookmark-research-fast" if skip_google_search else "bookmark-research",
-        **req,
+        system_instruction=_SYSTEM,
+        store=False,
     )
-    grounded = parse_grounded_interaction(interaction)
-    text = (grounded.text or interaction.output_text or "").strip()
+    text = (interaction.output_text or "").strip()
 
     summary = _parse_line(text, "SUMMARY")
     signal = _parse_line(text, "SIGNAL")
@@ -96,24 +94,5 @@ def _research_bookmark_once(
         research_summary=summary,
         relevance_signal=signal,
         relevance_status=status,
-        research_sources=grounded.citations[:5],
+        research_sources=citations[:5],
     )
-
-
-def research_bookmark(
-    raw_text: str,
-    url: str,
-    *,
-    skip_google_search: bool = False,
-) -> BookmarkResearch:
-    """Grounded research → summary, validation signal, status, and sources."""
-    try:
-        return _research_bookmark_once(raw_text, url, skip_google_search=skip_google_search)
-    except Exception as exc:
-        if skip_google_search or not _too_many_tool_calls(exc):
-            raise
-        logger.warning(
-            "Gemini google_search overflow — retrying without search for %s",
-            url[:80],
-        )
-        return _research_bookmark_once(raw_text, url, skip_google_search=True)

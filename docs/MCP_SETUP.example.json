@@ -6,6 +6,7 @@
       "cwd": "/absolute/path/to/kairos",
       "env": {
         "GEMINI_API_KEY": "your-gemini-key",
+        "EXA_API_KEY": "your-exa-key",
         "KAIROS_USER_ID": "google-sub-after-connect"
       }
     }

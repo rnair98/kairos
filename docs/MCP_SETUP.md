@@ -33,7 +33,7 @@ uv run kairos mcp
 Copy [MCP_SETUP.example.json](./MCP_SETUP.example.json) and set:
 
 - `cwd` — absolute path to this repo
-- `env` — `GEMINI_API_KEY`, `KAIROS_USER_ID` (after connect); storage is a local `kairos.db` file, no env var needed
+- `env` — `GEMINI_API_KEY`, `EXA_API_KEY` (optional — web grounding fails soft without it), `KAIROS_USER_ID` (after connect); storage is a local `kairos.db` file, no env var needed
 
 ```json
 {
@@ -44,6 +44,7 @@ Copy [MCP_SETUP.example.json](./MCP_SETUP.example.json) and set:
       "cwd": "/Users/you/sandbox/kairos",
       "env": {
         "GEMINI_API_KEY": "...",
+        "EXA_API_KEY": "...",
         "KAIROS_USER_ID": "google-sub-after-connect"
       }
     }

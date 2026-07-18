@@ -8,7 +8,7 @@ import orjson
 
 from kairos.config import settings
 from kairos.llm.interactions import create_interaction
-from kairos.llm.grounding import parse_grounded_interaction
+from kairos.llm.grounding import search_web
 from kairos.models.schemas import (
     BookmarkEnrichment,
     ClusterDigest,
@@ -155,12 +155,16 @@ def _structured_cluster_digest(
     return ClusterDigest.model_validate(data)
 
 
-def _ground_digest_with_search(
+def _ground_digest(
     digest: ClusterDigest,
     context: ContextSnapshot,
     bookmark_snippets: list[str],
 ) -> ClusterDigest:
-    """Enrich digest with timely web context via Google Search grounding."""
+    """Enrich digest with timely web context: Exa retrieves, Gemini synthesizes."""
+    retrieved = search_web(f"{digest.cluster_name}: {digest.summary}".strip())
+    if not retrieved.text:
+        return digest
+
     snippets = "\n".join(f"- {s[:200]}" for s in bookmark_snippets[:5])
     context_bits = [
         f"location={context.location_type}",
@@ -180,28 +184,22 @@ def _ground_digest_with_search(
             f"Why now (draft): {digest.why_now}\n\n"
             f"Saved bookmarks:\n{snippets or '(none)'}\n\n"
             f"User moment: {', '.join(context_bits)}\n\n"
-            "Search the web for timely context that connects this cluster to the user's "
-            "current moment. Write 2-3 sentences on what's happening in this topic space "
-            "that makes revisiting these bookmarks worthwhile now. "
-            "Do not list the bookmarks again."
+            f"Retrieved web context:\n{retrieved.text}\n\n"
+            "Using only the retrieved web context above, write 2-3 sentences on what's "
+            "happening in this topic space that makes revisiting these bookmarks worthwhile "
+            "now. Do not list the bookmarks again. Do not invent facts beyond what's retrieved."
         ),
         system_instruction=(
-            "You enrich a personal bookmark digest with grounded, current web context. "
+            "You synthesize retrieved web context into a personal bookmark digest. "
             "Be concise and factual. Prefer recent developments over generic background."
         ),
-        tools=[{"type": "google_search"}],
         store=False,
     )
-    grounded = parse_grounded_interaction(interaction)
-    if not grounded.text:
+    text = (interaction.output_text or "").strip()
+    if not text:
         return digest
 
-    return digest.model_copy(
-        update={
-            "web_context": grounded.text,
-            "citations": grounded.citations,
-        }
-    )
+    return digest.model_copy(update={"web_context": text, "citations": retrieved.citations})
 
 
 def _critique_digest(
@@ -333,10 +331,10 @@ def generate_cluster_digest(
         member_count,
         prompt_override=prompt_override,
     )
-    skip_search = evergreen and settings.digest_skip_search_evergreen
+    skip_search = evergreen and settings.digest_skip_grounding_evergreen
     was_grounded = False
-    if settings.digest_use_google_search and not skip_search:
-        digest = _ground_digest_with_search(digest, context, bookmark_snippets)
+    if settings.digest_use_web_grounding and settings.grounding_provider == "exa" and not skip_search:
+        digest = _ground_digest(digest, context, bookmark_snippets)
         was_grounded = bool(digest.web_context)
     was_revised = False
     if settings.intelligence_digest_multistep:

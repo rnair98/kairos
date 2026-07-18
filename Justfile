@@ -178,7 +178,6 @@ _demo-serve-app port:
     [[ -f .env.demo ]] && set -a && source .env.demo && set +a
     export GROUNDING_PROVIDER="${GROUNDING_PROVIDER:-exa}"
     export DIGEST_USE_WEB_GROUNDING="${DIGEST_USE_WEB_GROUNDING:-true}"
-    export DIGEST_USE_GOOGLE_SEARCH="${DIGEST_USE_GOOGLE_SEARCH:-false}"
     export INTELLIGENCE_DIGEST_RUNTIME_FAST="${INTELLIGENCE_DIGEST_RUNTIME_FAST:-true}"
     export INTELLIGENCE_MOMENT_FIT_CHECK="${INTELLIGENCE_MOMENT_FIT_CHECK:-false}"
     export DEMO_MODE="${DEMO_MODE:-true}"
@@ -215,7 +214,6 @@ demo-surface override="":
       just demo-reset
       export GROUNDING_PROVIDER="${GROUNDING_PROVIDER:-exa}"
       export DIGEST_USE_WEB_GROUNDING="${DIGEST_USE_WEB_GROUNDING:-true}"
-      export DIGEST_USE_GOOGLE_SEARCH="${DIGEST_USE_GOOGLE_SEARCH:-false}"
       export INTELLIGENCE_DIGEST_RUNTIME_FAST="${INTELLIGENCE_DIGEST_RUNTIME_FAST:-true}"
       export INTELLIGENCE_MOMENT_FIT_CHECK="${INTELLIGENCE_MOMENT_FIT_CHECK:-false}"
       if [[ -n "$OVERRIDE" ]]; then

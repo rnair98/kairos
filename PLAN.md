@@ -396,7 +396,7 @@ Force-multiplier upgrades distilled from two independent research passes (this r
 | **R3** | Sleep-time-lite | Sleep-time Compute (Lin 2025); Letta dual-agent | Live SURFACE path is 20–40s (moment-fit + grounding + digest) | `core/sleep_cache.py`, `core/context.py`, `core/ranking.py` | Active |
 | **R4** | GEPA + trace join | GEPA (Agrawal 2026); Letta Context Repositories | ✅ Prompt diff loop shipped; remaining trace join would make prompt→output→reward exact | `core/optimize.py`, `db/optimization_runs.py`, future trace table | Partial |
 | **R4a** | Real GEPA — standalone `gepa` library | GEPA (Agrawal et al., ICLR 2026 oral); `gepa-ai/gepa` | Shipped loop fabricates its lift (`engagement_before × 1.12`) and auto-activates any changed prompt; no measured optimization exists | `core/optimize.py`, `core/eval_harness.py`, `db/optimization_runs.py`, `sim/persona.py` | Active |
-| **R4b** | Exa grounding adapter | Exa API | Web grounding coupled to Gemini `google_search`; no provider abstraction, citations, or cost metadata | `llm/generation.py` (`_ground_digest_with_search`), new `GroundingProvider` | Queued (post-R2) |
+| **R4b** | Exa grounding adapter | Exa API | ✅ Shipped — Exa retrieval + Gemini synthesis replaces `google_search` tool coupling; ahead of R2/R5 sequencing since it was small, contained, and unblocked | `llm/exa_client.py`, `llm/grounding.py` (`search_web`), `llm/generation.py` (`_ground_digest`), `llm/research.py` | Done |
 | **R5** | PRISM — calibrated speak-vs-silent | PRISM (2026); selective prediction / calibrated abstention | Binary `moment_fit` threshold is uncalibrated; abstention is the thesis but isn't principled | `core/ranking.py` gate layer, `core/intelligence.py` | Active (promoted) |
 | **R6** | Latent-receptivity POMDP / LTV | O'Brien 2022 (Meta); Steyvers–Mayer 2025; restless bandits | Myopic bandit optimizes this tick; the real failure is 7-day disengagement. Hand-tuned `daily_surface_budget` + `min_gap` are a crude approximation of the optimal long-horizon policy | `core/ltv.py` (new), `core/ranking.py` gates, `sim/feedback_model.py` | Active (promoted) |
 
@@ -498,9 +498,11 @@ result = gepa.optimize(
 
 **Named caveat.** Optimizing against the judge means GEPA learns to please the judge — the same circularity trap named in R6. That is why activation authority lives with the live treatment bandit, and why the judge rubric encodes restraint, so "pleasing the judge" at least points at the thesis rather than at engagement bait.
 
-### R4b — Exa grounding adapter (decoupled from optimizer work)
+### R4b — Exa grounding adapter (shipped — decoupled from optimizer work)
 
-The grounding swap from the old R4a, now its own line so a retrieval-provider migration is never coupled to the learning loop: replace direct Gemini `google_search` calls (`_ground_digest_with_search`) with a `GroundingProvider` backed by Exa. Demos run with Exa grounding enabled; `none` is reserved for offline/CI runs. Exa supplies search results, page contents, published dates, highlights, citations, request IDs, and cost metadata; Gemini synthesizes those retrieved facts into `web_context`. **Sequenced after R5/R2:** it replaces a working, demoed path and carries integration risk with zero learning-loop payoff, so it does not belong in front of thesis-critical work.
+The grounding swap from the old R4a, kept as its own line so a retrieval-provider migration is never coupled to the learning loop. Replaced direct Gemini `google_search` tool calls with a two-step pipeline: `llm/exa_client.py::get_exa_client()` (shared singleton, mirrors `get_genai_client()`) + `llm/grounding.py::search_web(query, num_results)` calls Exa's `/search` endpoint with `contents={"text": ..., "highlights": true}`, returning a provider-agnostic `GroundedText(text, citations)`; a plain (tool-less) Gemini call then synthesizes that retrieved text into `digest.web_context`, respecting the digest's voice — `llm/generation.py::_ground_digest` and `llm/research.py::research_bookmark` both consume it. `GROUNDING_PROVIDER=exa` (default) / `none`, `DIGEST_USE_WEB_GROUNDING` gates digests, `digest_skip_grounding_evergreen` unchanged. Fails soft: no `EXA_API_KEY`, a rate limit, or an empty result set returns `GroundedText("", [])` rather than raising — grounding is enrichment, not a required step, so offline/CI runs work with zero config. Citations, published dates, and highlight text come straight from Exa's response — no more annotation-parsing off Gemini's grounding metadata.
+
+**Why shipped ahead of R5/R2 despite the stated sequencing:** the original ordering deferred R4b because it "carries integration risk with zero learning-loop payoff." In practice it was small, fully decoupled from the bandit/GEPA loops, and had zero open questions once Exa's API shape was confirmed — pulling it forward cost nothing and removed a live dependency on Gemini's `google_search` tool coupling before R5/R2 land.
 
 ### R5 — PRISM, calibrated speak-vs-silent (promoted — silence is the thesis, so make it principled)
 
@@ -532,7 +534,7 @@ These stay out of the active roadmap, but **not** for effort reasons. Each has a
 
 Full survey + citations: `docs/archive/research/CURSOR.md`.
 
-**Active roadmap sequence:** R4a (real GEPA — deletes the fabricated-lift gate; judge harness first, then `gepa.optimize`; offline only, serving path untouched) -> R5 (calibrated gate — small, thesis-critical) -> R2 (linear bandit) -> DR-OPE substrate -> R6 (POMDP + honest gym) -> R3 (sleep cache) -> R4b (Exa grounding) -> R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D — and it is also R4a's deployment channel, so Sprint D doubles as GEPA's activation UI.
+**Active roadmap sequence:** R4b (Exa grounding — shipped out of order, see rationale above) -> R4a (real GEPA — deletes the fabricated-lift gate; judge harness first, then `gepa.optimize`; offline only, serving path untouched) -> R5 (calibrated gate — small, thesis-critical) -> R2 (linear bandit) -> DR-OPE substrate -> R6 (POMDP + honest gym) -> R3 (sleep cache) -> R4 trace join. R1 is shipped; its treatment-lift panel is Finish Line Sprint D — and it is also R4a's deployment channel, so Sprint D doubles as GEPA's activation UI.
 
 ---
 
@@ -643,7 +645,7 @@ Custom scheduler eliminated. Three Claude Code mechanisms replace it:
 | Bandit | Thompson sampling α/β + cohort prior + treatment posterior | done |
 | Prompt optimization | Hand-rolled reflection loop (ungated) → standalone `gepa` library + LLM-judge harness, treatment-arm deployment (R4a) | replace |
 | LLM boundary | Gemini constrained decoding + Pydantic + `$ref` inliner (BAML evaluated and deferred — see roadmap) | done |
-| Web grounding | Exa-only `GroundingProvider`; enabled for demos; `none` only for offline/CI (R4b) | planned |
+| Web grounding | Exa `search_web()` retrieval + Gemini synthesis (`GROUNDING_PROVIDER=exa`); fails soft to `none` without `EXA_API_KEY` (R4b) | done |
 | LLM — enrichment | Gemini flash-lite via `google-genai` Interactions API | done |
 | LLM — digest generation | Gemini flash via `google-genai` Interactions API | done |
 | Agent harness | Antigravity SDK (`google-antigravity`) | done |

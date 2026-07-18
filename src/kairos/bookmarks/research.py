@@ -100,7 +100,7 @@ async def research_stored_bookmarks(
                     research_bookmark,
                     context,
                     url,
-                    skip_google_search=fast,
+                    skip_grounding=fast,
                 )
                 return x_tweet_id, research, source_hash, None, fetched, fast
             except Exception as exc:  # noqa: BLE001

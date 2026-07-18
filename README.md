@@ -45,7 +45,7 @@ The core demo beat is simple: **dismiss a surface and watch beta increase**. No 
 ## Quick Start
 
 ```bash
-cp .env.example .env   # set GEMINI_API_KEY (storage is a local kairos.db file — no setup needed)
+cp .env.example .env   # set GEMINI_API_KEY, optionally EXA_API_KEY for web grounding (storage is a local kairos.db file — no setup needed)
 brew install just      # or: cargo install just
 
 just demo-serve

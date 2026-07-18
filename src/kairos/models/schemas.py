@@ -61,7 +61,7 @@ class BookmarkEnrichment(BaseModel):
 
 
 class UrlCitation(BaseModel):
-    """Source link from Gemini Google Search grounding."""
+    """Source link from Exa web grounding."""
 
     url: str
     title: str | None = None
