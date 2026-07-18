@@ -1,0 +1,65 @@
+pyproject.toml
+  s_9878790b1180ce::t_b61875b0308c3f 27
+docs/ARCHITECTURE.md
+  s_9878790b1180ce::t_99de44b1149a6b 297
+  s_9878790b1180ce::t_b0a22a3dcf4719 755,757
+  s_9878790b1180ce::t_8759ef525b732c 850-852
+src/kairos/llm/generation.py
+  s_9878790b1180ce::t_1889d54df7d0ec 334,337
+  s_9878790b1180ce::t_4c1dfafd3898f4 336
+  s_9878790b1180ce::t_8328379a516462 11
+  s_9878790b1180ce::t_a73728d7abcb4f 158,163-167,187-190,193,198-199,202
+docs/CLOUD_RUN.md
+  s_9878790b1180ce::t_55bcef24b82727 14,22
+src/kairos/llm/research.py
+  s_9878790b1180ce::t_b60feddc643029 1,3-4,14,23-24,46,50,52,56-57,60-65,67-68,72,74-75,77,97
+  s_9878790b1180ce::t_14f7b092cc366e 54-55,59,66
+  s_9878790b1180ce::t_8bf318fd56e678 58
+  s_9878790b1180ce::t_a7e706d892926d 16
+docs/MCP_SETUP.md
+  s_9878790b1180ce::t_5d4d61136b21c2 36,47
+src/kairos/config.py
+  s_9878790b1180ce::t_b6599366891397 41,45-47
+  s_9878790b1180ce::t_2cba5026d57017 16,18
+  s_9878790b1180ce::t_b14e74770c5324 17
+  s_9878790b1180ce::t_52b234e624acd3 48
+docs/MCP_SETUP.example.json
+  s_9878790b1180ce::t_610862b585bd5a 9
+src/kairos/llm/grounding.py
+  s_9878790b1180ce::t_dec7f38734e8fc 1,5,8-9,12-13,21-46,48-51,53-58
+README.md
+  s_9878790b1180ce::t_6dc872bce81eeb 48
+.env.example
+  s_9878790b1180ce::t_13bf0478a21631 1-3
+PLAN.md
+  s_9878790b1180ce::t_e5e9fd2a15ac21 648
+  s_9878790b1180ce::t_8c39be2496f1eb 537
+  s_9878790b1180ce::t_82ce365d79ffd9 501,503-505
+  s_9878790b1180ce::t_544600b5f52fb2 399
+src/kairos/models/schemas.py
+  s_9878790b1180ce::t_1d8a8a1858a2bb 64
+src/kairos/llm/exa_client.py
+  s_9878790b1180ce::t_ec325315d0a91b 1-15
+AGENTS.md
+  s_9878790b1180ce::t_31f86ea460ccc3 24
+src/kairos/bookmarks/research.py
+  s_9878790b1180ce::t_8fef2d6b010071 103
+uv.lock
+  s_9878790b1180ce::t_542d86f74b692f 553-570,1202-1269,1335,1375,2180-2198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "ce475a3f7151122e24e4365a64c1181636e9f0f4",
+  "prompts": {},
+  "sessions": {
+    "s_9878790b1180ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "814afe08-6e85-4d71-bcf6-b1c20b0acf40",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Rohit Nair <6954311+rnair98@users.noreply.github.com>"
+    }
+  }
+}
